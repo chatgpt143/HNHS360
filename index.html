@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0f3d75">
+  <title>HNHS360</title>
+  <style>
+    :root{--navy:#0f3d75;--blue:#1c5aa6;--bg:#f3f7fc;--text:#172033;--muted:#6b778c;--line:#dce4ef;--green:#1e8e5a;--amber:#b87300;--red:#b93838}
+    *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:linear-gradient(180deg,#eaf2fb,#f8fafc 55%,#fff);color:var(--text);min-height:100vh}
+    .shell{max-width:560px;margin:0 auto;min-height:100vh;background:rgba(255,255,255,.9);box-shadow:0 0 50px rgba(15,61,117,.08)}
+    header{background:linear-gradient(135deg,var(--navy),var(--blue));color:#fff;padding:28px 22px 24px;border-radius:0 0 28px 28px}
+    .brand{font-size:34px;font-weight:850;letter-spacing:.2px}.tag{font-size:13px;opacity:.92;margin-top:2px}.content{padding:20px}
+    .card{background:#fff;border:1px solid var(--line);border-radius:20px;padding:18px;margin-bottom:14px;box-shadow:0 8px 24px rgba(18,48,82,.05)}
+    h2{font-size:20px;margin:0 0 6px}h3{font-size:16px;margin:0 0 8px}.muted{color:var(--muted);font-size:13px}
+    .field{margin:12px 0}.field label{display:block;font-size:12px;font-weight:750;color:#42516a;margin-bottom:6px}.field input{width:100%;padding:13px 14px;border:1px solid #cbd5e1;border-radius:12px;font-size:15px;outline:none}.field input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(28,90,166,.12)}
+    button{border:0;border-radius:12px;padding:13px 15px;font-weight:750;font-size:14px;cursor:pointer}.primary{width:100%;background:var(--navy);color:#fff}.secondary{width:100%;background:#eaf1fa;color:var(--navy);margin-top:8px}.logout{background:rgba(255,255,255,.16);color:#fff;padding:9px 11px}.row{display:flex;gap:10px;align-items:center}.between{justify-content:space-between}
+    .hidden{display:none!important}.msg{padding:10px 12px;border-radius:10px;font-size:13px;margin:10px 0}.error{background:#fdeaea;color:#942929}.success{background:#e2f4e9;color:#16643f}
+    .module{padding:15px;border:1px solid var(--line);border-radius:15px;margin-top:10px}.pill{display:inline-flex;padding:5px 9px;border-radius:999px;font-size:11px;font-weight:800;text-transform:uppercase}.pending{background:#fff1cc;color:#8c5c00}.cleared{background:#dff5e8;color:#17673f}.with_requirement{background:#fde4e4;color:#962d2d}
+    .term-tabs{display:flex;gap:7px;margin:12px 0}.term{flex:1;background:#eef3f9;color:#36506f;padding:10px}.term.active{background:var(--navy);color:#fff}.subject{padding:13px 0;border-bottom:1px solid #edf0f4}.subject:last-child{border-bottom:0}.subject-name{font-weight:750;font-size:14px}
+    .topline{font-size:12px;opacity:.85;margin-bottom:2px}.name{font-size:21px;font-weight:800}.role{font-size:12px;opacity:.85;text-transform:capitalize}.empty{padding:16px 0;text-align:center;color:var(--muted);font-size:13px}.count{font-size:26px;font-weight:800;color:var(--navy)}.footer{text-align:center;color:#8b96a7;font-size:11px;padding:18px 10px 30px}
+  </style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div class="row between">
+      <div><div class="brand">HNHS360</div><div class="tag">Smart Access for Every HNHS Learner</div></div>
+      <button id="logoutBtn" class="logout hidden">Log out</button>
+    </div>
+    <div id="userHead" class="hidden" style="margin-top:18px">
+      <div class="topline">Signed in as</div><div id="headName" class="name"></div><div id="headRole" class="role"></div>
+    </div>
+  </header>
+
+  <main class="content">
+    <section id="loginView">
+      <div class="card">
+        <h2>Welcome to HNHS360</h2>
+        <div class="muted">Subject Clearances is the first active HNHS360 service.</div>
+        <div id="loginMsg"></div>
+        <div class="field"><label>Email</label><input id="loginEmail" type="email" autocomplete="username" placeholder="Enter your account email"></div>
+        <div class="field"><label>Password</label><input id="loginPassword" type="password" autocomplete="current-password" placeholder="Enter your password"></div>
+        <button id="loginBtn" class="primary">Sign In</button>
+        <button id="showSetup" class="secondary">First-time Admin Setup</button>
+      </div>
+
+      <div id="setupCard" class="card hidden">
+        <h3>Create Initial Admin</h3>
+        <div class="muted">This works only once, before any HNHS360 user account exists.</div>
+        <div id="setupMsg"></div>
+        <div class="field"><label>Admin Full Name</label><input id="setupName" placeholder="Full name"></div>
+        <div class="field"><label>Admin Email</label><input id="setupEmail" type="email" placeholder="Email address"></div>
+        <div class="field"><label>Password</label><input id="setupPassword" type="password" placeholder="At least 8 characters"></div>
+        <button id="setupBtn" class="primary">Create HNHS360 Admin</button>
+      </div>
+    </section>
+
+    <section id="dashboardView" class="hidden"><div id="dashboard"></div></section>
+    <div class="footer">HNHS360 • Halapitan National High School</div>
+  </main>
+</div>
+<script>
+const SUPABASE_URL='https://aicodkyypynlodwcjmxr.supabase.co';
+const KEY='sb_publishable_0tl2K0_0X7fFIzZjl6_W9A_gv34IuL8';
+let session=null,profile=null,activeTerm=1;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function showMsg(id,text,type='error'){ $(id).innerHTML=text?`<div class="msg ${type}">${esc(text)}</div>`:''; }
+async function api(path,opts={}){
+  const headers={apikey:KEY,...(opts.headers||{})};
+  if(session?.access_token)headers.Authorization='Bearer '+session.access_token;
+  const r=await fetch(SUPABASE_URL+path,{...opts,headers});
+  const t=await r.text(); let data=null; try{data=t?JSON.parse(t):null}catch{data=t}
+  if(!r.ok)throw new Error(data?.message||data?.msg||data?.error||('Request failed '+r.status));
+  return data;
+}
+async function login(){
+  showMsg('loginMsg','');
+  try{
+    const email=$('loginEmail').value.trim(),password=$('loginPassword').value;
+    const data=await api('/auth/v1/token?grant_type=password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
+    session=data;localStorage.setItem('hnhs360_session',JSON.stringify(data));await loadProfile();
+  }catch(e){showMsg('loginMsg',e.message)}
+}
+async function loadProfile(){
+  const uid=session?.user?.id;if(!uid)return logout();
+  try{
+    const rows=await api('/rest/v1/profiles?user_id=eq.'+encodeURIComponent(uid)+'&select=user_id,full_name,role,is_active');
+    if(!rows?.length)throw new Error('This account is not yet linked to an HNHS360 role.');
+    profile=rows[0];if(!profile.is_active)throw new Error('This HNHS360 account is inactive.');
+    $('loginView').classList.add('hidden');$('dashboardView').classList.remove('hidden');$('logoutBtn').classList.remove('hidden');$('userHead').classList.remove('hidden');
+    $('headName').textContent=profile.full_name;$('headRole').textContent=profile.role.replaceAll('_',' ');await renderDashboard();
+  }catch(e){showMsg('loginMsg',e.message);$('loginView').classList.remove('hidden');$('dashboardView').classList.add('hidden')}
+}
+function logout(){session=null;profile=null;localStorage.removeItem('hnhs360_session');$('loginView').classList.remove('hidden');$('dashboardView').classList.add('hidden');$('logoutBtn').classList.add('hidden');$('userHead').classList.add('hidden')}
+async function renderDashboard(){if(profile.role==='student')return renderStudent();if(profile.role==='admin')return renderAdmin();if(profile.role==='adviser')return renderAdviser();return renderTeacher()}
+async function renderAdmin(){
+  const periods=await api('/rest/v1/clearance_periods?select=term_no,name,is_active,school_year&order=term_no.asc');
+  const sections=await api('/rest/v1/sections?select=id&is_active=eq.true');
+  const students=await api('/rest/v1/students?select=id&is_active=eq.true');
+  $('dashboard').innerHTML=`<div class="card"><h2>Admin Dashboard</h2><div class="muted">Manage the HNHS360 Subject Clearance system.</div><div class="row" style="margin-top:16px"><div style="flex:1"><div class="count">${sections.length}</div><div class="muted">Active Sections</div></div><div style="flex:1"><div class="count">${students.length}</div><div class="muted">Learners</div></div></div></div><div class="card"><h3>Subject Clearances</h3>${periods.map(p=>`<div class="module"><div class="row between"><div><b>Term ${p.term_no}</b><div class="muted">${esc(p.school_year)}</div></div><span class="pill ${p.is_active?'cleared':'pending'}">${p.is_active?'Active':'Inactive'}</span></div></div>`).join('')}</div><div class="card"><h3>Management</h3><div class="module"><b>Accounts & Sections</b><div class="muted">Adviser, Subject Teacher, section and learner management will be added next.</div></div><div class="module"><b>Subjects & Assignments</b><div class="muted">Up to 6 subjects per term per section.</div></div></div>`;
+}
+async function renderAdviser(){
+  const a=await api('/rest/v1/adviser_section_assignments?adviser_user_id=eq.'+profile.user_id+'&select=section_id');
+  const ids=a.map(x=>x.section_id);let sections=[];
+  if(ids.length)sections=await api('/rest/v1/sections?id=in.('+ids.join(',')+')&select=id,grade_level,section_name,school_year');
+  $('dashboard').innerHTML=`<div class="card"><h2>Adviser Dashboard</h2><div class="muted">You can manage only your assigned section(s).</div></div><div class="card"><h3>Assigned Sections</h3>${sections.length?sections.map(s=>`<div class="module"><b>Grade ${s.grade_level} – ${esc(s.section_name)}</b><div class="muted">SY ${esc(s.school_year)}</div></div>`).join(''):'<div class="empty">No section has been assigned yet.</div>'}</div>`;
+}
+async function renderTeacher(){
+  const ts=await api('/rest/v1/term_subjects?teacher_user_id=eq.'+profile.user_id+'&is_active=eq.true&select=id,period_id,section_id,subject_id,slot_no');
+  $('dashboard').innerHTML=`<div class="card"><h2>Subject Teacher Dashboard</h2><div class="muted">You can update only the subject clearances assigned to your account.</div></div><div class="card"><h3>Assigned Classes</h3>${ts.length?ts.map(x=>`<div class="module"><b>Assigned Subject Slot ${x.slot_no}</b><div class="muted">Learner clearance editing will appear here in the next build.</div></div>`).join(''):'<div class="empty">No subject assignment yet.</div>'}</div>`;
+}
+async function renderStudent(){
+  const s=await api('/rest/v1/students?user_id=eq.'+profile.user_id+'&select=id,lrn,full_name,section_id');
+  if(!s.length){$('dashboard').innerHTML='<div class="card"><h2>Student Dashboard</h2><div class="empty">Your student record has not yet been linked by the Adviser.</div></div>';return}
+  const st=s[0];const periods=await api('/rest/v1/clearance_periods?select=id,term_no,name,school_year&order=term_no.asc');
+  const tabs=periods.map(p=>`<button class="term ${p.term_no===activeTerm?'active':''}" onclick="changeTerm(${p.term_no})">Term ${p.term_no}</button>`).join('');
+  const p=periods.find(x=>x.term_no===activeTerm);let html='';
+  if(p){
+    const ts=await api('/rest/v1/term_subjects?period_id=eq.'+p.id+'&section_id=eq.'+st.section_id+'&is_active=eq.true&select=id,subject_id,slot_no&order=slot_no.asc');
+    let subjects=[];if(ts.length){const subIds=[...new Set(ts.map(x=>x.subject_id))];subjects=await api('/rest/v1/subjects?id=in.('+subIds.join(',')+')&select=id,subject_name')}
+    const cr=await api('/rest/v1/subject_clearance_records?student_id=eq.'+st.id+'&select=term_subject_id,status,remarks,updated_at');
+    html=ts.length?ts.map(x=>{const sub=subjects.find(y=>y.id===x.subject_id);const r=cr.find(y=>y.term_subject_id===x.id)||{status:'pending',remarks:null};return `<div class="subject"><div class="row between"><div class="subject-name">${esc(sub?.subject_name||('Subject '+x.slot_no))}</div><span class="pill ${r.status}">${esc(r.status.replaceAll('_',' '))}</span></div>${r.remarks?`<div class="muted" style="margin-top:5px">${esc(r.remarks)}</div>`:''}</div>`}).join(''):'<div class="empty">No subjects encoded for this term yet.</div>';
+  }
+  $('dashboard').innerHTML=`<div class="card"><h2>${esc(st.full_name)}</h2><div class="muted">LRN ${esc(st.lrn)}</div></div><div class="card"><h3>Subject Clearances</h3><div class="term-tabs">${tabs}</div>${html}</div>`;
+}
+window.changeTerm=async n=>{activeTerm=n;await renderStudent()};
+async function setup(){
+  showMsg('setupMsg','');
+  try{
+    const r=await fetch(SUPABASE_URL+'/functions/v1/bootstrap-admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({full_name:$('setupName').value.trim(),email:$('setupEmail').value.trim(),password:$('setupPassword').value})});
+    const d=await r.json();if(!r.ok)throw new Error(d.error||'Setup failed');showMsg('setupMsg','Admin created. You can now sign in.','success');$('loginEmail').value=$('setupEmail').value.trim();
+  }catch(e){showMsg('setupMsg',e.message)}
+}
+$('loginBtn').onclick=login;$('logoutBtn').onclick=logout;$('showSetup').onclick=()=> $('setupCard').classList.toggle('hidden');$('setupBtn').onclick=setup;
+(async()=>{try{const raw=localStorage.getItem('hnhs360_session');if(raw){session=JSON.parse(raw);await loadProfile()}}catch{logout()}})();
+</script>
+</body>
+</html>
