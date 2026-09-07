@@ -1,0 +1,97 @@
+(()=>{
+const css=document.createElement('style');
+css.textContent=`
+.adv360-tabs{display:flex;gap:7px;margin:12px 0;overflow-x:auto;padding-bottom:3px}.adv360-tabs button{flex:0 0 auto;background:#eef3f9;color:#36506f;white-space:nowrap}.adv360-tabs button.active{background:#0f3d75;color:#fff}.adv360-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}.adv360-edit{background:#eaf1fa;color:#0f3d75;padding:8px 11px}.adv360-remove{background:#fdeaea;color:#9b2929;padding:8px 11px}.adv360-progress{height:9px;background:#edf2f7;border-radius:999px;overflow:hidden;margin:8px 0}.adv360-progress>span{display:block;height:100%;background:#1e8e5a;border-radius:999px}.adv360-subject{padding:10px 0;border-top:1px solid #edf0f4}.adv360-subject:first-child{border-top:0}.adv360-filter{display:grid;grid-template-columns:1fr 1fr;gap:10px}.adv360-filter .field{margin:4px 0}.adv360-search{margin-top:10px}.adv360-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0}.adv360-summary>div{border:1px solid #dce4ef;border-radius:12px;padding:10px;text-align:center}.adv360-summary b{display:block;font-size:20px;color:#0f3d75}.adv360-note{background:#f4f7fb;border-radius:12px;padding:10px 12px;font-size:12px;color:#5e6f85;margin:10px 0}@media(max-width:560px){.adv360-filter{grid-template-columns:1fr}.adv360-summary{grid-template-columns:1fr 1fr 1fr}}
+`;
+document.head.appendChild(css);
+
+let adv360Tab='overview';
+let adv360SelectedSection=null;
+let adv360SelectedTerm=null;
+let adv360OverviewFilter='all';
+
+async function advSections(){
+  const a=await api('/rest/v1/adviser_section_assignments?adviser_user_id=eq.'+profile.user_id+'&select=section_id');
+  const ids=[...new Set((a||[]).map(x=>x.section_id))];
+  if(!ids.length)return [];
+  return api('/rest/v1/sections?id=in.('+ids.join(',')+')&is_active=eq.true&select=id,grade_level,section_name,school_year&order=grade_level.asc,section_name.asc');
+}
+async function advPeriods(){return api('/rest/v1/clearance_periods?select=id,term_no,name,school_year,is_active&order=term_no.asc')}
+async function advTeachers(){return api('/rest/v1/profiles?role=eq.subject_teacher&is_active=eq.true&select=user_id,full_name&order=full_name.asc')}
+async function advSubjects(){return api('/rest/v1/subjects?is_active=eq.true&select=id,subject_code,subject_name&order=subject_name.asc')}
+function advSectionName(s){return s?`Grade ${s.grade_level} – ${esc(s.section_name)}`:'Section'}
+function advStatusLabel(s){return s==='with_requirement'?'With Requirement':s==='cleared'?'Cleared':'Pending'}
+function advPatch(table,id,row){return api('/rest/v1/'+table+'?id=eq.'+id,{method:'PATCH',headers:{'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify(row)})}
+
+window.setAdv360Tab=async function(t){adv360Tab=t;await renderAdviser()};
+
+renderAdviser=async function(){
+  try{
+    const sections=await advSections();
+    $('dashboard').innerHTML=`<div class="card"><h2>Adviser Dashboard</h2><div class="muted">Manage your assigned section(s), subject assignments, and clearance progress.</div><div class="adv360-tabs">${[
+      ['overview','Overview'],['assignments','Subject Assignments'],['clearance','Clearance Overview'],['teachers','Subject Teachers'],['learners','Learners']
+    ].map(x=>`<button class="${adv360Tab===x[0]?'active':''}" onclick="setAdv360Tab('${x[0]}')">${x[1]}</button>`).join('')}</div></div><div id="adv360Editor"></div><div id="adv360Panel"></div>`;
+    if(!sections.length){$('adv360Panel').innerHTML='<div class="card"><div class="empty">No section has been assigned to your Adviser account yet.</div></div>';return}
+    if(!adv360SelectedSection||!sections.some(s=>Number(s.id)===Number(adv360SelectedSection)))adv360SelectedSection=sections[0].id;
+    if(adv360Tab==='assignments')return advRenderAssignments(sections);
+    if(adv360Tab==='clearance')return advRenderClearance(sections);
+    if(adv360Tab==='teachers')return advRenderTeachers(sections);
+    if(adv360Tab==='learners')return advRenderLearners(sections);
+    return advRenderOverview(sections);
+  }catch(e){$('dashboard').innerHTML=`<div class="card"><h2>Adviser Dashboard</h2><div class="msg error">${esc(e.message)}</div></div>`}
+};
+
+async function advRenderOverview(sections){
+  const ids=sections.map(s=>s.id);
+  const [students,assignments]=await Promise.all([
+    api('/rest/v1/students?section_id=in.('+ids.join(',')+')&is_active=eq.true&select=id,section_id'),
+    api('/rest/v1/term_subjects?section_id=in.('+ids.join(',')+')&is_active=eq.true&select=id,section_id,period_id,teacher_user_id')
+  ]);
+  const teacherCount=new Set(assignments.map(a=>a.teacher_user_id).filter(Boolean)).size;
+  $('adv360Panel').innerHTML=`<div class="card"><h3>My Section(s)</h3>${sections.map(s=>{const sc=students.filter(x=>Number(x.section_id)===Number(s.id)).length,ac=assignments.filter(x=>Number(x.section_id)===Number(s.id)).length;return `<div class="module"><div class="title">${advSectionName(s)}</div><div class="muted">SY ${esc(s.school_year)} • ${sc} learner${sc===1?'':'s'} • ${ac} active subject assignment${ac===1?'':'s'}</div></div>`}).join('')}</div><div class="card"><h3>Quick Summary</h3><div class="stats"><div class="stat"><div class="count">${sections.length}</div><div class="muted">Sections</div></div><div class="stat"><div class="count">${students.length}</div><div class="muted">Learners</div></div><div class="stat"><div class="count">${teacherCount}</div><div class="muted">Teachers</div></div></div><div class="adv360-note">Use <b>Subject Assignments</b> to set up the six subject slots per term. Use <b>Clearance Overview</b> to monitor progress without changing a teacher's clearance decision.</div></div>`;
+}
+
+async function advRenderAssignments(sections){
+  const [periods,subjects,teachers]=await Promise.all([advPeriods(),advSubjects(),advTeachers()]);
+  if(!adv360SelectedTerm||!periods.some(p=>Number(p.id)===Number(adv360SelectedTerm)))adv360SelectedTerm=periods[0]?.id||null;
+  const sid=Number(adv360SelectedSection),pid=Number(adv360SelectedTerm);
+  const assignments=pid?await api(`/rest/v1/term_subjects?section_id=eq.${sid}&period_id=eq.${pid}&is_active=eq.true&select=id,period_id,section_id,subject_id,teacher_user_id,slot_no&order=slot_no.asc`):[];
+  const sm=Object.fromEntries(subjects.map(x=>[x.id,x])),tm=Object.fromEntries(teachers.map(x=>[x.user_id,x]));
+  const section=sections.find(s=>Number(s.id)===sid),period=periods.find(p=>Number(p.id)===pid);
+  $('adv360Panel').innerHTML=`<div class="card"><h3>Subject Assignments</h3><div class="adv360-note">Maximum of 6 subjects per term. New assignments automatically create Pending clearance rows for learners in the section.</div><div id="advAssignMsg"></div><div class="adv360-filter"><div class="field"><label>Section</label><select id="advAssignSection" onchange="adv360ChangeAssignmentFilter()">${sections.map(s=>`<option value="${s.id}" ${Number(s.id)===sid?'selected':''}>${advSectionName(s)}</option>`).join('')}</select></div><div class="field"><label>Term</label><select id="advAssignTerm" onchange="adv360ChangeAssignmentFilter()">${periods.map(p=>`<option value="${p.id}" ${Number(p.id)===pid?'selected':''}>Term ${p.term_no} • SY ${esc(p.school_year)}</option>`).join('')}</select></div></div><div class="grid2"><div class="field"><label>Subject</label><select id="advAssignSubject"><option value="">Select Subject</option>${subjects.map(s=>`<option value="${s.id}">${esc(s.subject_name)}</option>`).join('')}</select></div><div class="field"><label>Subject Teacher</label><select id="advAssignTeacher"><option value="">Select Teacher</option>${teachers.map(t=>`<option value="${t.user_id}">${esc(t.full_name)}</option>`).join('')}</select></div></div><div class="field"><label>Subject Slot</label><select id="advAssignSlot">${[1,2,3,4,5,6].map(n=>`<option value="${n}">Slot ${n}</option>`).join('')}</select></div><button class="primary" onclick="adv360AddAssignment()">Add Subject Assignment</button></div><div class="card"><h3>${advSectionName(section)} • ${period?`Term ${period.term_no}`:'Term'}</h3>${assignments.length?assignments.map(a=>{const sub=sm[a.subject_id],tea=tm[a.teacher_user_id];return `<div class="listrow"><div class="title">Slot ${a.slot_no} • ${esc(sub?.subject_name||'Subject')}</div><div class="muted">${esc(tea?.full_name||'No Subject Teacher')}</div><div class="adv360-actions"><button class="adv360-edit" onclick="adv360EditAssignment(${a.id},${a.slot_no},'${a.teacher_user_id||''}')">Edit</button><button class="adv360-remove" onclick="adv360RemoveAssignment(${a.id},'${esc(sub?.subject_name||'Subject').replace(/'/g,"&#39;")}')">Remove</button></div></div>`}).join(''):'<div class="empty">No subject assignments yet for this term.</div>'}</div>`;
+}
+
+window.adv360ChangeAssignmentFilter=async function(){adv360SelectedSection=Number($('advAssignSection').value);adv360SelectedTerm=Number($('advAssignTerm').value);await renderAdviser()};
+window.adv360AddAssignment=async function(){showMsg('advAssignMsg','');try{const subjectId=Number($('advAssignSubject').value),teacherId=$('advAssignTeacher').value,slot=Number($('advAssignSlot').value);if(!subjectId||!teacherId)throw new Error('Select a subject and Subject Teacher.');await insertRow('term_subjects',{period_id:Number(adv360SelectedTerm),section_id:Number(adv360SelectedSection),subject_id:subjectId,teacher_user_id:teacherId,slot_no:slot,is_active:true,created_by:profile.user_id});showMsg('advAssignMsg','Subject assignment added.','success');setTimeout(()=>renderAdviser(),350)}catch(e){const m=String(e.message||e);showMsg('advAssignMsg',m.includes('duplicate')?'That slot or subject is already assigned for this section and term.':m)}};
+window.adv360EditAssignment=async function(id,slot,teacherId){try{const teachers=await advTeachers();const host=$('adv360Editor');host.innerHTML=`<div class="card manage-editor"><h3>Edit Subject Assignment</h3><div class="adv360-note">To change the Term, Section, or Subject, remove this assignment and create a new one so existing clearance history stays correct.</div><div id="advAssignEditMsg"></div><div class="field"><label>Subject Teacher</label><select id="advEditTeacher">${teachers.map(t=>`<option value="${t.user_id}" ${t.user_id===teacherId?'selected':''}>${esc(t.full_name)}</option>`).join('')}</select></div><div class="field"><label>Subject Slot</label><select id="advEditSlot">${[1,2,3,4,5,6].map(n=>`<option value="${n}" ${n===Number(slot)?'selected':''}>Slot ${n}</option>`).join('')}</select></div><div class="adv360-actions"><button class="primary" style="width:auto;flex:1" onclick="adv360SaveAssignment(${id})">Save Changes</button><button class="secondary" style="width:auto;flex:1;margin:0" onclick="$('adv360Editor').innerHTML=''">Cancel</button></div></div>`;host.scrollIntoView({behavior:'smooth',block:'start'})}catch(e){alert(e.message)}};
+window.adv360SaveAssignment=async function(id){showMsg('advAssignEditMsg','');try{await advPatch('term_subjects',id,{teacher_user_id:$('advEditTeacher').value,slot_no:Number($('advEditSlot').value)});showMsg('advAssignEditMsg','Assignment updated.','success');setTimeout(()=>renderAdviser(),350)}catch(e){showMsg('advAssignEditMsg',String(e.message||e).includes('duplicate')?'That slot is already in use.':e.message)}};
+window.adv360RemoveAssignment=async function(id,name){if(!confirm(`Remove ${name} from active subject assignments? Existing clearance history will be preserved.`))return;try{await advPatch('term_subjects',id,{is_active:false});await renderAdviser()}catch(e){alert(e.message)}};
+
+async function advRenderClearance(sections){
+  const periods=await advPeriods();if(!adv360SelectedTerm||!periods.some(p=>Number(p.id)===Number(adv360SelectedTerm)))adv360SelectedTerm=periods[0]?.id||null;
+  const sid=Number(adv360SelectedSection),pid=Number(adv360SelectedTerm);const section=sections.find(s=>Number(s.id)===sid),period=periods.find(p=>Number(p.id)===pid);
+  const assignments=pid?await api(`/rest/v1/term_subjects?section_id=eq.${sid}&period_id=eq.${pid}&is_active=eq.true&select=id,subject_id,teacher_user_id,slot_no&order=slot_no.asc`):[];
+  const students=await api(`/rest/v1/students?section_id=eq.${sid}&is_active=eq.true&select=id,lrn,full_name&order=full_name.asc`);
+  const [subjects,teachers]=await Promise.all([advSubjects(),advTeachers()]);
+  let records=[];if(assignments.length)records=await api('/rest/v1/subject_clearance_records?term_subject_id=in.('+assignments.map(a=>a.id).join(',')+')&select=id,student_id,term_subject_id,status,remarks,updated_at');
+  const subm=Object.fromEntries(subjects.map(x=>[x.id,x])),tm=Object.fromEntries(teachers.map(x=>[x.user_id,x]));
+  const rm={};records.forEach(r=>{rm[r.student_id+'-'+r.term_subject_id]=r});
+  const rows=students.map(st=>{const details=assignments.map(a=>({a,r:rm[st.id+'-'+a.id]||{status:'pending',remarks:null}}));const cleared=details.filter(x=>x.r.status==='cleared').length,req=details.filter(x=>x.r.status==='with_requirement').length,pending=details.filter(x=>x.r.status==='pending').length;return {st,details,cleared,req,pending,total:assignments.length}});
+  const fully=rows.filter(x=>x.total>0&&x.cleared===x.total).length,withReq=rows.filter(x=>x.req>0).length,hasPending=rows.filter(x=>x.total===0||x.pending>0).length;
+  $('adv360Panel').innerHTML=`<div class="card"><h3>Clearance Overview</h3><div class="muted">View-only. Subject Teachers control clearance status and remarks.</div><div class="adv360-filter"><div class="field"><label>Section</label><select id="advClearSection" onchange="adv360ChangeClearanceFilter()">${sections.map(s=>`<option value="${s.id}" ${Number(s.id)===sid?'selected':''}>${advSectionName(s)}</option>`).join('')}</select></div><div class="field"><label>Term</label><select id="advClearTerm" onchange="adv360ChangeClearanceFilter()">${periods.map(p=>`<option value="${p.id}" ${Number(p.id)===pid?'selected':''}>Term ${p.term_no} • SY ${esc(p.school_year)}</option>`).join('')}</select></div></div><div class="adv360-summary"><div><b>${fully}</b><span class="muted">Fully Cleared</span></div><div><b>${hasPending}</b><span class="muted">Pending</span></div><div><b>${withReq}</b><span class="muted">With Requirement</span></div></div><div class="field adv360-search"><label>Search Learner</label><input id="advClearSearch" placeholder="Type learner name or LRN" oninput="adv360FilterClearance()"></div><div class="field"><label>Show</label><select id="advClearStatus" onchange="adv360OverviewFilter=this.value;adv360FilterClearance()"><option value="all" ${adv360OverviewFilter==='all'?'selected':''}>All Learners</option><option value="cleared" ${adv360OverviewFilter==='cleared'?'selected':''}>Fully Cleared</option><option value="pending" ${adv360OverviewFilter==='pending'?'selected':''}>Has Pending</option><option value="with_requirement" ${adv360OverviewFilter==='with_requirement'?'selected':''}>With Requirement</option></select></div></div><div class="card"><h3>${advSectionName(section)} • ${period?`Term ${period.term_no}`:'Term'} (${students.length} learners)</h3>${assignments.length?rows.map(x=>{const pct=x.total?Math.round(x.cleared/x.total*100):0;const bucket=x.req>0?'with_requirement':x.total>0&&x.cleared===x.total?'cleared':'pending';return `<div class="module adv-clear-row" data-search="${esc((x.st.full_name+' '+x.st.lrn).toLowerCase())}" data-bucket="${bucket}"><div class="row between"><div><div class="title">${esc(x.st.full_name)}</div><div class="muted">LRN ${esc(x.st.lrn)}</div></div><b>${x.cleared}/${x.total}</b></div><div class="adv360-progress"><span style="width:${pct}%"></span></div>${x.details.map(d=>{const sub=subm[d.a.subject_id],tea=tm[d.a.teacher_user_id];return `<div class="adv360-subject"><div class="row between"><div><div class="subject-name">Slot ${d.a.slot_no} • ${esc(sub?.subject_name||'Subject')}</div><div class="muted">${esc(tea?.full_name||'Subject Teacher')}</div></div><span class="pill ${d.r.status}">${advStatusLabel(d.r.status)}</span></div>${d.r.remarks?`<div class="hint">Remarks: ${esc(d.r.remarks)}</div>`:''}</div>`}).join('')}</div>`}).join(''):'<div class="empty">No subject assignments for this section and term yet.</div>'}</div>`;
+  adv360FilterClearance();
+}
+window.adv360ChangeClearanceFilter=async function(){adv360SelectedSection=Number($('advClearSection').value);adv360SelectedTerm=Number($('advClearTerm').value);await renderAdviser()};
+window.adv360FilterClearance=function(){const q=($('advClearSearch')?.value||'').trim().toLowerCase();const f=$('advClearStatus')?.value||adv360OverviewFilter||'all';document.querySelectorAll('.adv-clear-row').forEach(el=>{const qok=!q||String(el.dataset.search||'').includes(q);const fok=f==='all'||el.dataset.bucket===f;el.style.display=qok&&fok?'block':'none'})};
+
+async function advRenderTeachers(sections){
+  const ids=sections.map(s=>s.id);const assignments=await api('/rest/v1/term_subjects?section_id=in.('+ids.join(',')+')&is_active=eq.true&select=id,section_id,teacher_user_id,subject_id,period_id');const tids=[...new Set(assignments.map(x=>x.teacher_user_id).filter(Boolean))];let teachers=[];if(tids.length)teachers=await api('/rest/v1/profiles?user_id=in.('+tids.join(',')+')&role=eq.subject_teacher&is_active=eq.true&select=user_id,full_name,role&order=full_name.asc');const sm=Object.fromEntries(sections.map(s=>[s.id,s]));
+  $('adv360Panel').innerHTML=`<div class="card"><h3>Subject Teachers</h3><div class="adv360-note">You can edit/remove teachers connected to your assigned section(s). If a teacher also handles another Adviser's section, Admin management may be required.</div>${teachers.length?teachers.map(t=>{const secNames=[...new Set(assignments.filter(a=>a.teacher_user_id===t.user_id).map(a=>sm[a.section_id]).filter(Boolean).map(advSectionName))].join(', ');return `<div class="listrow"><div class="title">${esc(t.full_name)}</div><div class="muted">${esc(secNames)}</div><div class="adv360-actions"><button class="adv360-edit" onclick="adviserEditTeacher('${t.user_id}','${esc(t.full_name).replace(/'/g,"&#39;")}')">Edit</button><button class="adv360-remove" onclick="adviserRemoveTeacher('${t.user_id}','${esc(t.full_name).replace(/'/g,"&#39;")}')">Remove</button></div></div>`}).join(''):'<div class="empty">No Subject Teachers are assigned to your section(s).</div>'}</div>`;
+}
+async function advRenderLearners(sections){
+  const ids=sections.map(s=>s.id);const students=await api('/rest/v1/students?section_id=in.('+ids.join(',')+')&is_active=eq.true&select=id,user_id,lrn,full_name,section_id&order=full_name.asc');const sm=Object.fromEntries(sections.map(s=>[s.id,s]));
+  $('adv360Panel').innerHTML=`<div class="card"><h3>Learners</h3>${students.length?students.map(s=>`<div class="listrow"><div class="title">${esc(s.full_name)}</div><div class="muted">LRN ${esc(s.lrn)} • ${advSectionName(sm[s.section_id])}</div><div class="adv360-actions"><button class="adv360-edit" onclick="editLearnerAccount('${s.user_id}','${esc(s.full_name).replace(/'/g,"&#39;")}','${s.lrn}',${s.section_id},'adviser')">Edit</button><button class="adv360-remove" onclick="removeLearnerAccount('${s.user_id}','${esc(s.full_name).replace(/'/g,"&#39;")}','adviser')">Remove</button></div></div>`).join(''):'<div class="empty">No active learners in your assigned section(s).</div>'}</div>`;
+}
+
+if(typeof profile!=='undefined'&&profile?.role==='adviser')renderAdviser().catch(()=>{});
+})();
