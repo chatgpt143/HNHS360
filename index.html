@@ -13,11 +13,11 @@
 <body>
 <div class="loading"><section><b>HNHS360</b><div>Loading Smart Access...</div></section></div>
 <script>
-const BUILD='20260908e';
+const BUILD='20260908f';
 fetch('./app.html?v='+BUILD,{cache:'no-store'})
   .then(r=>{if(!r.ok)throw new Error('Unable to load HNHS360');return r.text()})
   .then(html=>{
-    const extras='<script src="./teacher.js?v='+BUILD+'"><\/script><script src="./management.js?v='+BUILD+'"><\/script><script src="./admin-entities.js?v='+BUILD+'"><\/script>';
+    const extras='<script src="./teacher.js?v='+BUILD+'"><\/script><script src="./management.js?v='+BUILD+'"><\/script><script src="./admin-entities.js?v='+BUILD+'"><\/script><script src="./adviser.js?v='+BUILD+'"><\/script>';
     const patched=html.replace(/<\/body>/i,extras+'</body>');
     document.open();document.write(patched);document.close();
   })
