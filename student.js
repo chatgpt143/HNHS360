@@ -1,7 +1,7 @@
 (()=>{
 const css=document.createElement('style');
 css.textContent=`
-.student-id{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center}.student-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.student-chip{display:inline-flex;padding:6px 9px;border-radius:999px;background:#eef3f9;color:#36506f;font-size:12px;font-weight:700}.student-progress{height:11px;background:#edf2f7;border-radius:999px;overflow:hidden;margin:10px 0}.student-progress>span{display:block;height:100%;background:#1e8e5a;border-radius:999px}.student-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}.student-stat{border:1px solid #dce4ef;border-radius:13px;padding:10px;text-align:center}.student-stat b{display:block;font-size:20px;color:#0f3d75}.student-subject{border:1px solid #dce4ef;border-radius:16px;padding:14px;margin-top:10px}.student-subject-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.student-subject-name{font-size:15px;font-weight:800}.student-teacher{font-size:12px;color:#6b778c;margin-top:4px}.student-remarks{margin-top:10px;padding:10px 12px;border-radius:12px;background:#f5f8fc;font-size:13px;color:#3e4f66}.student-remarks.requirement{background:#fff0f0;color:#812828}.student-updated{font-size:11px;color:#8a96a8;margin-top:8px}.student-current{font-size:10px;font-weight:800;text-transform:uppercase;padding:4px 7px;border-radius:999px;background:#dff5e8;color:#17673f;margin-left:5px}.student-term-note{font-size:12px;color:#6b778c;margin-top:-4px;margin-bottom:10px}@media(max-width:520px){.student-id{grid-template-columns:1fr}.student-stats{grid-template-columns:repeat(3,1fr)}}`;
+.student-id{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center}.student-meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.student-chip{display:inline-flex;padding:6px 9px;border-radius:999px;background:#eef3f9;color:#36506f;font-size:12px;font-weight:700}.student-progress{height:11px;background:#edf2f7;border-radius:999px;overflow:hidden;margin:10px 0}.student-progress>span{display:block;height:100%;background:#1e8e5a;border-radius:999px}.student-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}.student-stat{border:1px solid #dce4ef;border-radius:13px;padding:10px;text-align:center}.student-stat b{display:block;font-size:20px;color:#0f3d75}.student-subject{border:1px solid #dce4ef;border-radius:16px;padding:14px;margin-top:10px}.student-subject-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.student-subject-name{font-size:15px;font-weight:800}.student-teacher{font-size:12px;color:#6b778c;margin-top:4px}.student-remarks{margin-top:10px;padding:10px 12px;border-radius:12px;background:#f5f8fc;font-size:13px;color:#3e4f66}.student-remarks.requirement{background:#fff0f0;color:#812828}.student-updated{font-size:11px;color:#8a96a8;margin-top:8px}.student-current{font-size:10px;font-weight:800;text-transform:uppercase;padding:4px 7px;border-radius:999px;background:#dff5e8;color:#17673f;margin-left:5px}.student-term-note{font-size:12px;color:#6b778c;margin-top:-4px;margin-bottom:10px}.student-term-state{display:inline-flex;padding:5px 8px;border-radius:999px;font-size:10px;font-weight:800;text-transform:uppercase;margin-left:5px}.student-term-open{background:#dff5e8;color:#17673f}.student-term-locked{background:#fde4e4;color:#962d2d}@media(max-width:520px){.student-id{grid-template-columns:1fr}.student-stats{grid-template-columns:repeat(3,1fr)}}`;
 document.head.appendChild(css);
 let studentTermInitialized=false;
 function statusText(s){return s==='with_requirement'?'With Requirement':s==='cleared'?'Cleared':'Pending'}
@@ -14,7 +14,7 @@ renderStudent=async function(){
     const st=rows[0];
     const [sections,periods]=await Promise.all([
       api('/rest/v1/sections?id=eq.'+st.section_id+'&select=id,grade_level,section_name,school_year,is_active'),
-      api('/rest/v1/clearance_periods?select=id,term_no,name,school_year,is_active,opens_at,closes_at&order=term_no.asc')
+      api('/rest/v1/clearance_periods?select=id,term_no,name,school_year,is_active,is_open,opens_at,closes_at&order=term_no.asc')
     ]);
     const sec=sections[0];
     if(!studentTermInitialized){const current=periods.find(p=>p.is_active);if(current)activeTerm=current.term_no;else if(periods.length)activeTerm=periods[0].term_no;studentTermInitialized=true}
@@ -28,7 +28,7 @@ renderStudent=async function(){
         const subIds=[...new Set(assignments.map(a=>a.subject_id))];
         const teacherIds=[...new Set(assignments.map(a=>a.teacher_user_id).filter(Boolean))];
         const reqs=[
-          api('/rest/v1/subjects?id=in.('+subIds.join(',')+')&select=id,subject_code,subject_name') ,
+          api('/rest/v1/subjects?id=in.('+subIds.join(',')+')&select=id,subject_code,subject_name'),
           api('/rest/v1/subject_clearance_records?student_id=eq.'+st.id+'&term_subject_id=in.('+assignments.map(a=>a.id).join(',')+')&select=id,term_subject_id,status,remarks,updated_by,updated_at')
         ];
         if(teacherIds.length)reqs.push(api('/rest/v1/profiles?user_id=in.('+teacherIds.join(',')+')&role=eq.subject_teacher&is_active=eq.true&select=user_id,full_name'));
@@ -41,7 +41,7 @@ renderStudent=async function(){
     const fully=total>0&&cleared===total;
     $('dashboard').innerHTML=`
       <div class="card"><div class="student-id"><div><h2>Student Dashboard</h2><div class="muted">Subject Clearance</div><div class="student-meta"><span class="student-chip">LRN ${esc(st.lrn)}</span>${sec?`<span class="student-chip">Grade ${sec.grade_level} – ${esc(sec.section_name)}</span><span class="student-chip">SY ${esc(sec.school_year)}</span>`:''}</div></div></div></div>
-      <div class="card"><h3>My Subject Clearances</h3><div class="term-tabs">${tabs}</div>${period?`<div class="student-term-note">Term ${period.term_no} • SY ${esc(period.school_year)}${period.is_active?' • Current active term':''}</div>`:''}
+      <div class="card"><h3>My Subject Clearances</h3><div class="term-tabs">${tabs}</div>${period?`<div class="student-term-note">Term ${period.term_no} • SY ${esc(period.school_year)}${period.is_active?' • Current term':''}<span class="student-term-state ${period.is_open?'student-term-open':'student-term-locked'}">${period.is_open?'Open':'Locked'}</span></div>`:''}
         <div class="row between"><div><b>${fully?'Term Clearance Complete':`${cleared} of ${total} subject${total===1?'':'s'} cleared`}</b><div class="muted">${total?pct+'% complete':'No subject assignments yet'}</div></div><div class="count">${pct}%</div></div>
         <div class="student-progress"><span style="width:${pct}%"></span></div>
         <div class="student-stats"><div class="student-stat"><b>${cleared}</b><span class="muted">Cleared</span></div><div class="student-stat"><b>${pending}</b><span class="muted">Pending</span></div><div class="student-stat"><b>${req}</b><span class="muted">Requirement</span></div></div>
