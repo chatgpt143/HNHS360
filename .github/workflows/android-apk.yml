@@ -34,32 +34,37 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Prepare official HNHS360 app icon
+        run: |
+          mkdir -p android-app/app/src/main/res/drawable-nodpi
+          base64 --decode android-app/assets/hnhs360_icon.webp.b64 > android-app/app/src/main/res/drawable-nodpi/hnhs360_icon.webp
+
       - name: Build installable debug APK
         working-directory: android-app
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Prepare APK file
         run: |
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk android-app/app/build/outputs/apk/debug/HNHS360-v1.0.0.apk
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk android-app/app/build/outputs/apk/debug/HNHS360-v1.0.1.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HNHS360-Android-v1.0.0
-          path: android-app/app/build/outputs/apk/debug/HNHS360-v1.0.0.apk
+          name: HNHS360-Android-v1.0.1
+          path: android-app/app/build/outputs/apk/debug/HNHS360-v1.0.1.apk
           if-no-files-found: error
 
       - name: Publish APK release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          APK='android-app/app/build/outputs/apk/debug/HNHS360-v1.0.0.apk'
-          TAG='android-v1.0.0'
+          APK='android-app/app/build/outputs/apk/debug/HNHS360-v1.0.1.apk'
+          TAG='android-v1.0.1'
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$APK" --clobber
           else
-            gh release create "$TAG" "$APK#HNHS360-v1.0.0.apk" \
+            gh release create "$TAG" "$APK#HNHS360-v1.0.1.apk" \
               --target "$GITHUB_SHA" \
-              --title 'HNHS360 Android v1.0.0' \
-              --notes 'HNHS360 Android app for Subject Teachers and Learners. Requires internet access and uses the live HNHS360 clearance system.'
+              --title 'HNHS360 Android v1.0.1' \
+              --notes 'HNHS360 Android app for Subject Teachers and Learners with the official HNHS360 app icon. Requires internet access and uses the live HNHS360 clearance system.'
           fi
