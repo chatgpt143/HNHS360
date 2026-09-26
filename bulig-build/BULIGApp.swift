@@ -778,6 +778,44 @@ struct SetupView: View {
 struct LearnersView: View {
     @ObservedObject var store: AppStore
     @State private var importMessage = ""
+    @State private var editingLearnerID: UUID? = nil
+    @State private var editLRN = ""
+    @State private var editName = ""
+    @State private var editSex = ""
+    @State private var editDOB = ""
+    @State private var learnerToRemove: Learner? = nil
+
+    private func beginEdit(_ learner: Learner) {
+        editingLearnerID = learner.id
+        editLRN = learner.lrn
+        editName = learner.fullName
+        editSex = learner.sex
+        editDOB = learner.dateOfBirth
+    }
+
+    private func saveEdit() {
+        guard let id = editingLearnerID,
+              let index = store.data.learners.firstIndex(where: { $0.id == id }) else { return }
+
+        store.data.learners[index].lrn = editLRN.filter(\.isNumber)
+        store.data.learners[index].fullName = editName.trimmingCharacters(in: .whitespacesAndNewlines)
+        store.data.learners[index].sex = editSex
+        store.data.learners[index].dateOfBirth = editDOB.trimmingCharacters(in: .whitespacesAndNewlines)
+        store.save()
+        editingLearnerID = nil
+    }
+
+    private func removeConfirmedLearner() {
+        guard let learner = learnerToRemove,
+              let index = store.data.learners.firstIndex(where: { $0.id == learner.id }) else {
+            learnerToRemove = nil
+            return
+        }
+        store.data.learners.remove(at: index)
+        store.save()
+        learnerToRemove = nil
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             PageHeader(title: "Learners", subtitle: "Learner master list and SF1 paste import")
@@ -786,36 +824,114 @@ struct LearnersView: View {
                     Label("Add Learner", systemImage: "plus")
                 }
                 .buttonStyle(.borderedProminent)
+
                 Button {
                     let n = store.importFromClipboard()
                     importMessage = n > 0 ? "Imported \(n) learner(s)." : "No valid new learners found. Copy tab-separated SF1 rows first."
                 } label: {
                     Label("Paste from SF1", systemImage: "doc.on.clipboard")
                 }
-                Text(importMessage).font(.caption).foregroundStyle(.secondary)
+
+                Text(importMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 Spacer()
-                Text("\(store.data.learners.count) learners").foregroundStyle(.secondary)
+                Text("\(store.data.learners.count) learners")
+                    .foregroundStyle(.secondary)
             }
+
             List {
-                ForEach($store.data.learners) { $learner in
-                    HStack(spacing: 10) {
-                        TextField("12-digit LRN", text: $learner.lrn).frame(width: 135)
-                        TextField("Learner Name", text: $learner.fullName).frame(minWidth: 260)
-                        Picker("", selection: $learner.sex) {
-                            Text("Sex").tag("")
-                            Text("Male").tag("Male")
-                            Text("Female").tag("Female")
+                ForEach(store.data.learners) { learner in
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(learner.fullName.isEmpty ? "Unnamed learner" : learner.fullName)
+                                .bold()
+                            HStack(spacing: 12) {
+                                Text(learner.lrn.isEmpty ? "No LRN" : learner.lrn)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(learner.sex.isEmpty ? "Sex not set" : learner.sex)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if !learner.dateOfBirth.isEmpty {
+                                    Text(learner.dateOfBirth)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                         }
-                        .frame(width: 110)
-                        TextField("Birth Date", text: $learner.dateOfBirth).frame(width: 120)
+
+                        Spacer()
+
+                        Button {
+                            beginEdit(learner)
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button(role: .destructive) {
+                            learnerToRemove = learner
+                        } label: {
+                            Label("Remove", systemImage: "trash")
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 6)
                 }
-                .onDelete(perform: store.deleteLearners)
             }
             .listStyle(.inset(alternatesRowBackgrounds: true))
         }
         .padding(28)
+        .sheet(isPresented: Binding(
+            get: { editingLearnerID != nil },
+            set: { if !$0 { editingLearnerID = nil } }
+        )) {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Edit Learner")
+                    .font(.title2.bold())
+
+                Form {
+                    TextField("LRN", text: $editLRN)
+                    TextField("Learner Name", text: $editName)
+                    Picker("Sex", selection: $editSex) {
+                        Text("Select").tag("")
+                        Text("Male").tag("Male")
+                        Text("Female").tag("Female")
+                    }
+                    TextField("Date of Birth", text: $editDOB)
+                }
+
+                HStack {
+                    Spacer()
+                    Button("Cancel") {
+                        editingLearnerID = nil
+                    }
+                    Button("Save Changes") {
+                        saveEdit()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(editName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .padding(24)
+            .frame(width: 520, height: 330)
+        }
+        .alert("Remove Learner?", isPresented: Binding(
+            get: { learnerToRemove != nil },
+            set: { if !$0 { learnerToRemove = nil } }
+        )) {
+            Button("Cancel", role: .cancel) {
+                learnerToRemove = nil
+            }
+            Button("Remove", role: .destructive) {
+                removeConfirmedLearner()
+            }
+        } message: {
+            let name = learnerToRemove?.fullName.isEmpty == false ? learnerToRemove!.fullName : "this learner"
+            Text("Remove \(name)? This will also delete the learner's pre-assessment and AP1–AP15 records.")
+        }
     }
 }
 
@@ -1088,7 +1204,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.6 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.7 • Offline macOS App")
             }
         }
     }
