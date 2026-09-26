@@ -120,3 +120,5 @@ jobs:
             BULIG_RMS_Teacher_Mac_v0.5_App.zip
           if-no-files-found: error
           retention-days: 7
+
+# BULIG macOS cloud build
