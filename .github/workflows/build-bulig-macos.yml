@@ -80,8 +80,8 @@ jobs:
             <key>CFBundleName</key><string>BULIG RMS Teacher</string>
             <key>CFBundleDisplayName</key><string>BULIG RMS Teacher</string>
             <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleShortVersionString</key><string>0.6</string>
-            <key>CFBundleVersion</key><string>6</string>
+            <key>CFBundleShortVersionString</key><string>0.7</string>
+            <key>CFBundleVersion</key><string>7</string>
             <key>LSMinimumSystemVersion</key><string>13.0</string>
             <key>NSHighResolutionCapable</key><true/>
             <key>NSPrincipalClass</key><string>NSApplication</string>
@@ -105,19 +105,19 @@ jobs:
             -srcfolder dmgroot \
             -ov \
             -format UDZO \
-            "BULIG_RMS_Teacher_Mac_v0.6.dmg"
+            "BULIG_RMS_Teacher_Mac_v0.7.dmg"
           ditto -c -k --sequesterRsrc --keepParent \
             "dist/BULIG RMS Teacher.app" \
-            "BULIG_RMS_Teacher_Mac_v0.6_App.zip"
-          ls -lh BULIG_RMS_Teacher_Mac_v0.6.dmg BULIG_RMS_Teacher_Mac_v0.6_App.zip
+            "BULIG_RMS_Teacher_Mac_v0.7_App.zip"
+          ls -lh BULIG_RMS_Teacher_Mac_v0.7.dmg BULIG_RMS_Teacher_Mac_v0.7_App.zip
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BULIG-RMS-Teacher-Mac-v0.6
+          name: BULIG-RMS-Teacher-Mac-v0.7
           path: |
-            BULIG_RMS_Teacher_Mac_v0.6.dmg
-            BULIG_RMS_Teacher_Mac_v0.6_App.zip
+            BULIG_RMS_Teacher_Mac_v0.7.dmg
+            BULIG_RMS_Teacher_Mac_v0.7_App.zip
           if-no-files-found: error
           retention-days: 7
 
