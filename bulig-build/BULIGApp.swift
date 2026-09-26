@@ -69,6 +69,47 @@ let assessmentPeriods = (1...15).map { "AP\($0)" }
 let terms = ["1ST", "2ND", "3RD", "4TH", "SUMMER"]
 let results = ["", "READY", "NOT READY", "NLP"]
 
+enum PrintoutType: String, CaseIterable, Identifiable {
+    case classroomMonitoring = "Classroom Reading Monitoring Report"
+    case pupilList = "List of Pupils"
+    var id: String { rawValue }
+}
+
+final class HTMLPrintCoordinator: NSObject, WKNavigationDelegate {
+    private let webView: WKWebView
+    private let orientation: NSPrintInfo.PaperOrientation
+    private let completion: () -> Void
+
+    init(html: String, orientation: NSPrintInfo.PaperOrientation, completion: @escaping () -> Void) {
+        self.webView = WKWebView(frame: NSRect(x: 0, y: 0, width: orientation == .landscape ? 1120 : 790, height: 1100))
+        self.orientation = orientation
+        self.completion = completion
+        super.init()
+        self.webView.navigationDelegate = self
+        self.webView.loadHTMLString(html, baseURL: Bundle.main.resourceURL)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            let info = NSPrintInfo.shared.copy() as! NSPrintInfo
+            info.paperSize = NSSize(width: 595.2, height: 841.8)
+            info.orientation = self.orientation
+            info.leftMargin = 36
+            info.rightMargin = 36
+            info.topMargin = 36
+            info.bottomMargin = 36
+            info.horizontalPagination = .fit
+            info.verticalPagination = .automatic
+            info.isHorizontallyCentered = true
+            let op = webView.printOperation(with: info)
+            op.showsPrintPanel = true
+            op.showsProgressPanel = true
+            op.run()
+            self.completion()
+        }
+    }
+}
+
 @MainActor
 final class AppStore: ObservableObject {
     @Published var data = AppData()
