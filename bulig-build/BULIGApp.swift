@@ -41,10 +41,11 @@ struct Learner: Identifiable, Codable, Equatable {
     var sex = ""
     var dateOfBirth = ""
     var pre = PreAssessment()
+    var preHistory: [String: PreAssessment] = [:]
     var assessments: [String: AssessmentEntry] = [:]
 
     enum CodingKeys: String, CodingKey {
-        case id, lrn, fullName, firstName, middleInitial, lastName, nameExtension, sex, dateOfBirth, pre, assessments
+        case id, lrn, fullName, firstName, middleInitial, lastName, nameExtension, sex, dateOfBirth, pre, preHistory, assessments
     }
 
     init(
@@ -58,6 +59,7 @@ struct Learner: Identifiable, Codable, Equatable {
         sex: String = "",
         dateOfBirth: String = "",
         pre: PreAssessment = PreAssessment(),
+        preHistory: [String: PreAssessment] = [:],
         assessments: [String: AssessmentEntry] = [:]
     ) {
         self.id = id
@@ -70,6 +72,7 @@ struct Learner: Identifiable, Codable, Equatable {
         self.sex = sex
         self.dateOfBirth = dateOfBirth
         self.pre = pre
+        self.preHistory = preHistory
         self.assessments = assessments
     }
 
@@ -85,6 +88,7 @@ struct Learner: Identifiable, Codable, Equatable {
         sex = try c.decodeIfPresent(String.self, forKey: .sex) ?? ""
         dateOfBirth = try c.decodeIfPresent(String.self, forKey: .dateOfBirth) ?? ""
         pre = try c.decodeIfPresent(PreAssessment.self, forKey: .pre) ?? PreAssessment()
+        preHistory = try c.decodeIfPresent([String: PreAssessment].self, forKey: .preHistory) ?? [:]
         assessments = try c.decodeIfPresent([String: AssessmentEntry].self, forKey: .assessments) ?? [:]
     }
 
@@ -132,6 +136,7 @@ let readingLevels: [ReadingLevel] = [
 let assessmentPeriods = (1...15).map { "AP\($0)" }
 let terms = ["1ST", "2ND", "3RD", "4TH", "SUMMER"]
 let results = ["", "READY", "NOT READY", "NLP"]
+let preAssessmentPeriods = ["BOSY", "MOSY", "EOSY"]
 
 struct SF1ParsedSheet: Decodable {
     let name: String
@@ -207,7 +212,7 @@ final class AppStore: ObservableObject {
     private let appName = "BULIG RMS Teacher"
     private var printCoordinator: HTMLPrintCoordinator?
 
-    init() { load(); migrateLearnerNameFields() }
+    init() { load(); migrateLearnerNameFields(); migratePreAssessmentHistory() }
 
     private var supportFolder: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -259,13 +264,104 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func schoolYearOptions() -> [String] {
+        var years = Set<String>()
+        if !data.settings.schoolYear.isEmpty { years.insert(data.settings.schoolYear) }
+        for learner in data.learners {
+            for year in learner.preHistory.keys { years.insert(year) }
+        }
+
+        let current = Calendar.current.component(.year, from: Date())
+        for start in (current - 5)...(current + 5) {
+            years.insert("\(start)-\(start + 1)")
+        }
+
+        return years.sorted {
+            let lhs = Int($0.split(separator: "-").first ?? "") ?? 0
+            let rhs = Int($1.split(separator: "-").first ?? "") ?? 0
+            return lhs > rhs
+        }
+    }
+
+    func preAssessment(for learner: Learner, schoolYear: String? = nil) -> PreAssessment {
+        let year = schoolYear ?? data.settings.schoolYear
+        if let saved = learner.preHistory[year] { return saved }
+        if learner.preHistory.isEmpty && year == data.settings.schoolYear { return learner.pre }
+        return PreAssessment()
+    }
+
+    private func setPreAssessment(_ value: PreAssessment, learnerID: UUID, schoolYear: String) {
+        guard let index = data.learners.firstIndex(where: { $0.id == learnerID }) else { return }
+        data.learners[index].preHistory[schoolYear] = value
+        if schoolYear == data.settings.schoolYear {
+            data.learners[index].pre = value
+        }
+        save()
+    }
+
+    func preLevelBinding(for learnerID: UUID, schoolYear: String) -> Binding<String> {
+        Binding(
+            get: {
+                guard let learner = self.data.learners.first(where: { $0.id == learnerID }) else { return "" }
+                return self.preAssessment(for: learner, schoolYear: schoolYear).level
+            },
+            set: { newValue in
+                guard let learner = self.data.learners.first(where: { $0.id == learnerID }) else { return }
+                var value = self.preAssessment(for: learner, schoolYear: schoolYear)
+                value.level = newValue
+                self.setPreAssessment(value, learnerID: learnerID, schoolYear: schoolYear)
+            }
+        )
+    }
+
+    func preProfileBinding(for learnerID: UUID, schoolYear: String, period: String) -> Binding<String> {
+        Binding(
+            get: {
+                guard let learner = self.data.learners.first(where: { $0.id == learnerID }) else { return "" }
+                let value = self.preAssessment(for: learner, schoolYear: schoolYear)
+                switch period {
+                case "MOSY": return value.mosy
+                case "EOSY": return value.eosy
+                default: return value.bosy
+                }
+            },
+            set: { newValue in
+                guard let learner = self.data.learners.first(where: { $0.id == learnerID }) else { return }
+                var value = self.preAssessment(for: learner, schoolYear: schoolYear)
+                switch period {
+                case "MOSY": value.mosy = newValue
+                case "EOSY": value.eosy = newValue
+                default: value.bosy = newValue
+                }
+                self.setPreAssessment(value, learnerID: learnerID, schoolYear: schoolYear)
+            }
+        )
+    }
+
+    private func migratePreAssessmentHistory() {
+        let year = data.settings.schoolYear
+        guard !year.isEmpty else { return }
+
+        var changed = false
+        for index in data.learners.indices {
+            if data.learners[index].preHistory[year] == nil {
+                let legacy = data.learners[index].pre
+                if !legacy.level.isEmpty || !legacy.bosy.isEmpty || !legacy.mosy.isEmpty || !legacy.eosy.isEmpty {
+                    data.learners[index].preHistory[year] = legacy
+                    changed = true
+                }
+            }
+        }
+        if changed { save() }
+    }
+
     func nextLevel(_ level: String) -> String {
         guard let idx = readingLevels.firstIndex(where: { $0.code == level }) else { return level }
         return readingLevels[min(idx + 1, readingLevels.count - 1)].code
     }
 
     func levelBeforeAP(_ learner: Learner, ap: String) -> String {
-        var level = learner.pre.level
+        var level = preAssessment(for: learner).level
         guard !level.isEmpty else { return "" }
         let target = assessmentPeriods.firstIndex(of: ap) ?? 0
         if target == 0 { return level }
@@ -283,8 +379,8 @@ final class AppStore: ObservableObject {
     }
 
     func currentLevel(_ learner: Learner, through ap: String?) -> String {
-        guard let ap else { return learner.pre.level }
-        var level = learner.pre.level
+        guard let ap else { return preAssessment(for: learner).level }
+        var level = preAssessment(for: learner).level
         guard !level.isEmpty else { return "" }
         for key in assessmentPeriods {
             if learner.assessments[key]?.result == "READY" { level = nextLevel(level) }
@@ -662,7 +758,7 @@ final class AppStore: ObservableObject {
     func reportRows(stage: String) -> [(String, Int, Int, Int)] {
         readingLevels.map { level in
             let matches = data.learners.filter { learner in
-                let current = stage == "PRETEST" ? learner.pre.level : currentLevel(learner, through: stage)
+                let current = stage == "PRETEST" ? preAssessment(for: learner).level : currentLevel(learner, through: stage)
                 return current == level.code
             }
             let male = matches.filter { $0.sex == "Male" }.count
@@ -673,7 +769,7 @@ final class AppStore: ObservableObject {
 
     func learnersForStage(_ stage: String) -> [(Learner, String)] {
         data.learners.map { learner in
-            let level = stage == "PRETEST" ? learner.pre.level : currentLevel(learner, through: stage)
+            let level = stage == "PRETEST" ? preAssessment(for: learner).level : currentLevel(learner, through: stage)
             return (learner, level)
         }
     }
@@ -692,7 +788,7 @@ final class AppStore: ObservableObject {
     func profileCount(_ profile: String, checkpoint: KeyPath<PreAssessment, String>, sex: String) -> Int {
         let target = storedProfileValue(profile)
         return data.learners.filter { learner in
-            learner.sex == sex && learner.pre[keyPath: checkpoint] == target
+            learner.sex == sex && preAssessment(for: learner)[keyPath: checkpoint] == target
         }.count
     }
 
@@ -834,9 +930,9 @@ final class AppStore: ObservableObject {
                 let ef = profileCount(profile, checkpoint: \.eosy, sex: "Female")
                 return "<tr><td>\(htmlEscape(profile))</td><td>\(bm)</td><td>\(bf)</td><td>\(htmlEscape(profile))</td><td>\(mm)</td><td>\(mf)</td><td>\(htmlEscape(profile))</td><td>\(em)</td><td>\(ef)</td></tr>"
             }.joined()
-            let bosyTotal = data.learners.filter { !$0.pre.bosy.isEmpty }.count
-            let mosyTotal = data.learners.filter { !$0.pre.mosy.isEmpty }.count
-            let eosyTotal = data.learners.filter { !$0.pre.eosy.isEmpty }.count
+            let bosyTotal = data.learners.filter { !preAssessment(for: $0).bosy.isEmpty }.count
+            let mosyTotal = data.learners.filter { !preAssessment(for: $0).mosy.isEmpty }.count
+            let eosyTotal = data.learners.filter { !preAssessment(for: $0).eosy.isEmpty }.count
             profileHTML = """
             <div class="profile-title">KEY STAGE \(keyStage())</div>
             <table class="profile">
@@ -1394,59 +1490,117 @@ struct LearnersView: View {
 
 struct PreAssessmentView: View {
     @ObservedObject var store: AppStore
+    @State private var selectedSchoolYear = ""
+    @State private var selectedPeriod = "BOSY"
+
+    private var activeSchoolYear: String {
+        selectedSchoolYear.isEmpty ? store.data.settings.schoolYear : selectedSchoolYear
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            PageHeader(title: "Pre-Assessment", subtitle: "Encode each learner's initial reading level and profile")
-            HStack {
-                Text("Automatic Key Stage:").foregroundStyle(.secondary)
-                Text(store.keyStage() == 0 ? "Select a grade level in Setup" : "Key Stage \(store.keyStage())").bold()
-                Spacer()
-                Picker("Pre-Test Term", selection: Binding(
-                    get: { store.data.assessmentTerms["PRETEST"] ?? "1ST" },
-                    set: { store.data.assessmentTerms["PRETEST"] = $0; store.save() }
-                )) {
-                    ForEach(terms, id: \.self) { Text($0).tag($0) }
+            PageHeader(
+                title: "Pre-Assessment",
+                subtitle: "Choose the school year and encoding period, then encode only that assessment."
+            )
+
+            HStack(spacing: 18) {
+                HStack(spacing: 6) {
+                    Text("Automatic Key Stage:")
+                        .foregroundStyle(.secondary)
+                    Text(store.keyStage() == 0 ? "Select a grade level in Setup" : "Key Stage \(store.keyStage())")
+                        .bold()
                 }
-                .frame(width: 170)
-            }
-            List {
-                ForEach($store.data.learners) { $learner in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(learner.displayName.isEmpty ? "Unnamed learner" : learner.displayName)
-                                .bold()
-                                .frame(minWidth: 220, alignment: .leading)
-                            Picker("Initial Level", selection: $learner.pre.level) {
-                                Text("Select Level").tag("")
-                                ForEach(readingLevels) { Text($0.code).tag($0.code) }
-                            }
-                            .frame(width: 170)
-                            Text(readingLevels.first(where: {$0.code == learner.pre.level})?.area ?? "—")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .frame(minWidth: 220, alignment: .leading)
-                        }
-                        HStack {
-                            Picker("BOSY", selection: $learner.pre.bosy) {
-                                ForEach(store.profileOptions(), id: \.self) { Text($0.isEmpty ? "BOSY" : $0).tag($0) }
-                            }
-                            .frame(width: 190)
-                            Picker("MOSY", selection: $learner.pre.mosy) {
-                                ForEach(store.profileOptions(), id: \.self) { Text($0.isEmpty ? "MOSY" : $0).tag($0) }
-                            }
-                            .frame(width: 190)
-                            Picker("EOSY", selection: $learner.pre.eosy) {
-                                ForEach(store.profileOptions(), id: \.self) { Text($0.isEmpty ? "EOSY" : $0).tag($0) }
-                            }
-                            .frame(width: 190)
-                        }
+
+                Spacer()
+
+                Picker("School Year", selection: Binding(
+                    get: { activeSchoolYear },
+                    set: { selectedSchoolYear = $0 }
+                )) {
+                    ForEach(store.schoolYearOptions(), id: \.self) { year in
+                        Text(year).tag(year)
                     }
-                    .padding(.vertical, 5)
+                }
+                .frame(width: 205)
+
+                Picker("Encoding Period", selection: $selectedPeriod) {
+                    ForEach(preAssessmentPeriods, id: \.self) { period in
+                        Text(period).tag(period)
+                    }
+                }
+                .frame(width: 185)
+            }
+
+            HStack {
+                Label("\(activeSchoolYear) • \(selectedPeriod) Encoding", systemImage: "square.and.pencil")
+                    .font(.headline)
+                Spacer()
+                Text("Only \(selectedPeriod) is shown below.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+
+            HStack(spacing: 12) {
+                Text("Learner").bold().frame(minWidth: 280, alignment: .leading)
+                Text("Initial Level").bold().frame(width: 170, alignment: .leading)
+                Text("Reading Component").bold().frame(minWidth: 230, alignment: .leading)
+                Text("\(selectedPeriod) Profile").bold().frame(width: 220, alignment: .leading)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+
+            List {
+                ForEach(store.data.learners) { learner in
+                    let pre = store.preAssessment(for: learner, schoolYear: activeSchoolYear)
+
+                    HStack(spacing: 12) {
+                        Text(learner.displayName.isEmpty ? "Unnamed learner" : learner.displayName)
+                            .bold()
+                            .frame(minWidth: 280, alignment: .leading)
+
+                        Picker("Initial Level", selection: store.preLevelBinding(
+                            for: learner.id,
+                            schoolYear: activeSchoolYear
+                        )) {
+                            Text("Select Level").tag("")
+                            ForEach(readingLevels) { level in
+                                Text(level.code).tag(level.code)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 170)
+
+                        Text(readingLevels.first(where: { $0.code == pre.level })?.area.capitalized ?? "—")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(minWidth: 230, alignment: .leading)
+
+                        Picker(selectedPeriod, selection: store.preProfileBinding(
+                            for: learner.id,
+                            schoolYear: activeSchoolYear,
+                            period: selectedPeriod
+                        )) {
+                            ForEach(store.profileOptions(), id: \.self) { option in
+                                Text(option.isEmpty ? "Select \(selectedPeriod)" : option).tag(option)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 220)
+                    }
+                    .padding(.vertical, 7)
                 }
             }
             .listStyle(.inset(alternatesRowBackgrounds: true))
         }
         .padding(28)
+        .onAppear {
+            if selectedSchoolYear.isEmpty {
+                selectedSchoolYear = store.data.settings.schoolYear
+            }
+        }
     }
 }
 
@@ -1661,7 +1815,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.9 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.10 • Offline macOS App")
             }
         }
     }
