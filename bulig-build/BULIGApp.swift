@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import WebKit
+import JavaScriptCore
 
 struct SchoolSettings: Codable, Equatable {
     var schoolName = ""
@@ -68,6 +69,31 @@ let readingLevels: [ReadingLevel] = [
 let assessmentPeriods = (1...15).map { "AP\($0)" }
 let terms = ["1ST", "2ND", "3RD", "4TH", "SUMMER"]
 let results = ["", "READY", "NOT READY", "NLP"]
+
+struct SF1ParsedSheet: Decodable {
+    let name: String
+    let rows: [[String]]
+}
+
+enum SF1ImportError: LocalizedError {
+    case parserMissing
+    case javascript(String)
+    case noSF1Sheet
+    case unreadable
+
+    var errorDescription: String? {
+        switch self {
+        case .parserMissing:
+            return "The SF1 spreadsheet reader is missing from this app build."
+        case .javascript(let message):
+            return "The SF1 file could not be read. \(message)"
+        case .noSF1Sheet:
+            return "No SF1 table with LRN, NAME, Sex, and BIRTH DATE columns was found."
+        case .unreadable:
+            return "The selected SF1 file could not be opened."
+        }
+    }
+}
 
 enum PrintoutType: String, CaseIterable, Identifiable {
     case classroomMonitoring = "Classroom Reading Monitoring Report"
@@ -225,6 +251,196 @@ final class AppStore: ObservableObject {
         }
         save()
         return added
+    }
+
+    private func normalizeSF1Header(_ value: String) -> String {
+        value.uppercased()
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+            .replacingOccurrences(of: "  ", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func sf1HeaderColumns(in rows: [[String]]) -> (row: Int, lrn: Int, name: Int, sex: Int, birth: Int)? {
+        for (rowIndex, row) in rows.enumerated() {
+            var lrnColumn: Int?
+            var nameColumn: Int?
+            var sexColumn: Int?
+            var birthColumn: Int?
+
+            for (columnIndex, raw) in row.enumerated() {
+                let value = normalizeSF1Header(raw)
+                if lrnColumn == nil && value.contains("LRN") {
+                    lrnColumn = columnIndex
+                }
+                if nameColumn == nil && (value == "NAME" || value.hasPrefix("NAME ") || value.contains("LAST NAME")) {
+                    nameColumn = columnIndex
+                }
+                if sexColumn == nil && value.contains("SEX") {
+                    sexColumn = columnIndex
+                }
+                if birthColumn == nil && value.contains("BIRTH") && value.contains("DATE") {
+                    birthColumn = columnIndex
+                }
+            }
+
+            if let lrnColumn, let nameColumn, let sexColumn, let birthColumn {
+                return (rowIndex, lrnColumn, nameColumn, sexColumn, birthColumn)
+            }
+        }
+        return nil
+    }
+
+    private func parseSpreadsheetSheets(at url: URL) throws -> [SF1ParsedSheet] {
+        guard let parserURL = Bundle.main.url(forResource: "xlsx.full.min", withExtension: "js") else {
+            throw SF1ImportError.parserMissing
+        }
+        guard let context = JSContext() else {
+            throw SF1ImportError.unreadable
+        }
+
+        var javascriptError = ""
+        context.exceptionHandler = { _, exception in
+            javascriptError = exception?.toString() ?? "Unknown spreadsheet parsing error."
+        }
+
+        let parserScript = try String(contentsOf: parserURL, encoding: .utf8)
+        context.evaluateScript(parserScript)
+        if !javascriptError.isEmpty {
+            throw SF1ImportError.javascript(javascriptError)
+        }
+
+        let fileData = try Data(contentsOf: url)
+        context.setObject(fileData.base64EncodedString(), forKeyedSubscript: "__bulig_sf1_base64" as NSString)
+
+        let conversionScript = """
+        (function () {
+          try {
+            var wb = XLSX.read(__bulig_sf1_base64, { type: 'base64', cellDates: false });
+            var output = wb.SheetNames.map(function (sheetName) {
+              var ws = wb.Sheets[sheetName];
+              var rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+              rows = rows.map(function (row) {
+                return row.map(function (value) {
+                  return value == null ? '' : String(value);
+                });
+              });
+              return { name: String(sheetName), rows: rows };
+            });
+            return JSON.stringify(output);
+          } catch (e) {
+            throw e;
+          }
+        })();
+        """
+
+        guard let jsonValue = context.evaluateScript(conversionScript),
+              javascriptError.isEmpty,
+              let json = jsonValue.toString(),
+              let jsonData = json.data(using: .utf8) else {
+            throw SF1ImportError.javascript(javascriptError.isEmpty ? "Invalid spreadsheet data." : javascriptError)
+        }
+
+        return try JSONDecoder().decode([SF1ParsedSheet].self, from: jsonData)
+    }
+
+    func importSF1File() -> String? {
+        let panel = NSOpenPanel()
+        panel.title = "Import School Form 1 (SF1)"
+        panel.message = "Select the DepEd SF1 Excel file. BULIG will import LRN, learner name, sex, and birth date."
+        panel.allowedFileTypes = ["xls", "xlsx", "xlsm"]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+
+        do {
+            let sheets = try parseSpreadsheetSheets(at: url)
+
+            var selectedSheet: SF1ParsedSheet?
+            var header: (row: Int, lrn: Int, name: Int, sex: Int, birth: Int)?
+
+            for sheet in sheets {
+                if let found = sf1HeaderColumns(in: sheet.rows) {
+                    selectedSheet = sheet
+                    header = found
+                    break
+                }
+            }
+
+            guard let sheet = selectedSheet, let columns = header else {
+                throw SF1ImportError.noSF1Sheet
+            }
+
+            var foundCount = 0
+            var importedCount = 0
+            var duplicateCount = 0
+            var invalidCount = 0
+            var seenLRNs = Set(data.learners.map { $0.lrn.filter(\.isNumber) })
+
+            for row in sheet.rows.dropFirst(columns.row + 1) {
+                func cell(_ index: Int) -> String {
+                    guard index >= 0, index < row.count else { return "" }
+                    return row[index].trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+
+                let lrn = cell(columns.lrn).filter(\.isNumber)
+                let name = cell(columns.name)
+                let rawSex = cell(columns.sex).uppercased()
+                let birthDate = cell(columns.birth)
+
+                // Actual learner records in SF1 have a 12-digit LRN.
+                guard !lrn.isEmpty || !name.isEmpty else { continue }
+                guard lrn.count == 12 else {
+                    if !name.isEmpty && !normalizeSF1Header(name).contains("TOTAL") {
+                        invalidCount += 1
+                    }
+                    continue
+                }
+
+                foundCount += 1
+
+                if seenLRNs.contains(lrn) {
+                    duplicateCount += 1
+                    continue
+                }
+
+                let sex: String
+                if rawSex == "M" || rawSex == "MALE" {
+                    sex = "Male"
+                } else if rawSex == "F" || rawSex == "FEMALE" {
+                    sex = "Female"
+                } else {
+                    sex = ""
+                }
+
+                data.learners.append(
+                    Learner(
+                        lrn: lrn,
+                        fullName: name,
+                        sex: sex,
+                        dateOfBirth: birthDate
+                    )
+                )
+                seenLRNs.insert(lrn)
+                importedCount += 1
+            }
+
+            save()
+
+            var lines = [
+                "SF1 import completed.",
+                "Worksheet: \(sheet.name)",
+                "Learners found: \(foundCount)",
+                "New learners imported: \(importedCount)"
+            ]
+            if duplicateCount > 0 { lines.append("Existing LRNs skipped: \(duplicateCount)") }
+            if invalidCount > 0 { lines.append("Rows skipped because the LRN was invalid or incomplete: \(invalidCount)") }
+            return lines.joined(separator: "\n")
+        } catch {
+            return "SF1 import failed.\n\(error.localizedDescription)"
+        }
     }
 
     func exportBackup() {
@@ -778,6 +994,7 @@ struct SetupView: View {
 struct LearnersView: View {
     @ObservedObject var store: AppStore
     @State private var importMessage = ""
+    @State private var showImportAlert = false
     @State private var editingLearnerID: UUID? = nil
     @State private var editLRN = ""
     @State private var editName = ""
@@ -818,7 +1035,7 @@ struct LearnersView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            PageHeader(title: "Learners", subtitle: "Learner master list and SF1 paste import")
+            PageHeader(title: "Learners", subtitle: "Learner master list and direct SF1 import")
             HStack {
                 Button { store.addLearner() } label: {
                     Label("Add Learner", systemImage: "plus")
@@ -826,20 +1043,33 @@ struct LearnersView: View {
                 .buttonStyle(.borderedProminent)
 
                 Button {
+                    if let message = store.importSF1File() {
+                        importMessage = message
+                        showImportAlert = true
+                    }
+                } label: {
+                    Label("Import SF1", systemImage: "square.and.arrow.down.on.square")
+                }
+                .buttonStyle(.bordered)
+
+                Button {
                     let n = store.importFromClipboard()
-                    importMessage = n > 0 ? "Imported \(n) learner(s)." : "No valid new learners found. Copy tab-separated SF1 rows first."
+                    importMessage = n > 0
+                        ? "Paste import completed.\nImported \(n) learner(s)."
+                        : "No valid new learners found. Copy tab-separated SF1 rows first."
+                    showImportAlert = true
                 } label: {
                     Label("Paste from SF1", systemImage: "doc.on.clipboard")
                 }
-
-                Text(importMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
 
                 Spacer()
                 Text("\(store.data.learners.count) learners")
                     .foregroundStyle(.secondary)
             }
+
+            Text("Import SF1 accepts DepEd Excel files (.xls, .xlsx, .xlsm) and reads LRN, Name, Sex, and Birth Date automatically.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             List {
                 ForEach(store.data.learners) { learner in
@@ -917,6 +1147,11 @@ struct LearnersView: View {
             }
             .padding(24)
             .frame(width: 520, height: 330)
+        }
+        .alert("SF1 Import", isPresented: $showImportAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(importMessage)
         }
         .alert("Remove Learner?", isPresented: Binding(
             get: { learnerToRemove != nil },
@@ -1204,7 +1439,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.7 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.8 • Offline macOS App")
             }
         }
     }
