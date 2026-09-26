@@ -45,12 +45,12 @@ jobs:
 
           xcrun swiftc -swift-version 5 -O -parse-as-library \
             -target arm64-apple-macos13.0 -sdk "$SDK" \
-            -framework SwiftUI -framework AppKit \
+            -framework SwiftUI -framework AppKit -framework WebKit \
             "$SRC" -o build/BULIG-arm64
 
           xcrun swiftc -swift-version 5 -O -parse-as-library \
             -target x86_64-apple-macos13.0 -sdk "$SDK" \
-            -framework SwiftUI -framework AppKit \
+            -framework SwiftUI -framework AppKit -framework WebKit \
             "$SRC" -o build/BULIG-x86_64
 
           lipo -create build/BULIG-arm64 build/BULIG-x86_64 -output build/BULIGRMSTeacher
@@ -80,8 +80,8 @@ jobs:
             <key>CFBundleName</key><string>BULIG RMS Teacher</string>
             <key>CFBundleDisplayName</key><string>BULIG RMS Teacher</string>
             <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleShortVersionString</key><string>0.5</string>
-            <key>CFBundleVersion</key><string>5</string>
+            <key>CFBundleShortVersionString</key><string>0.6</string>
+            <key>CFBundleVersion</key><string>6</string>
             <key>LSMinimumSystemVersion</key><string>13.0</string>
             <key>NSHighResolutionCapable</key><true/>
             <key>NSPrincipalClass</key><string>NSApplication</string>
@@ -105,19 +105,19 @@ jobs:
             -srcfolder dmgroot \
             -ov \
             -format UDZO \
-            "BULIG_RMS_Teacher_Mac_v0.5.dmg"
+            "BULIG_RMS_Teacher_Mac_v0.6.dmg"
           ditto -c -k --sequesterRsrc --keepParent \
             "dist/BULIG RMS Teacher.app" \
-            "BULIG_RMS_Teacher_Mac_v0.5_App.zip"
-          ls -lh BULIG_RMS_Teacher_Mac_v0.5.dmg BULIG_RMS_Teacher_Mac_v0.5_App.zip
+            "BULIG_RMS_Teacher_Mac_v0.6_App.zip"
+          ls -lh BULIG_RMS_Teacher_Mac_v0.6.dmg BULIG_RMS_Teacher_Mac_v0.6_App.zip
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BULIG-RMS-Teacher-Mac-v0.5
+          name: BULIG-RMS-Teacher-Mac-v0.6
           path: |
-            BULIG_RMS_Teacher_Mac_v0.5.dmg
-            BULIG_RMS_Teacher_Mac_v0.5_App.zip
+            BULIG_RMS_Teacher_Mac_v0.6.dmg
+            BULIG_RMS_Teacher_Mac_v0.6_App.zip
           if-no-files-found: error
           retention-days: 7
 
