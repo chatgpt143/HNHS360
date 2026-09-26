@@ -20,7 +20,7 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p build
-          base64 --decode bulig-build/BuligLogo.jpg.b64 > build/BuligLogo.jpg
+          base64 -D -i bulig-build/BuligLogo.jpg.b64 -o build/BuligLogo.jpg
 
           rm -rf build/BuligIcon.iconset
           mkdir -p build/BuligIcon.iconset
