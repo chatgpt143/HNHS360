@@ -1361,8 +1361,46 @@ struct LearnersView: View {
                 }
 
                 Spacer()
-                Text("\(store.data.learners.count) learners")
-                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 12) {
+                HStack(spacing: 7) {
+                    Image(systemName: "person.fill")
+                    Text("Male")
+                    Text("\(store.data.learners.filter { $0.sex == "Male" }.count)")
+                        .bold()
+                        .monospacedDigit()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(Color.blue.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+
+                HStack(spacing: 7) {
+                    Image(systemName: "person.fill")
+                    Text("Female")
+                    Text("\(store.data.learners.filter { $0.sex == "Female" }.count)")
+                        .bold()
+                        .monospacedDigit()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(Color.pink.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+
+                HStack(spacing: 7) {
+                    Image(systemName: "person.2.fill")
+                    Text("Total")
+                    Text("\(store.data.learners.count)")
+                        .bold()
+                        .monospacedDigit()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(Color.secondary.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+
+                Spacer()
             }
 
             Text("SF1 NAME is automatically separated into Last Name, First Name, Middle Initial, and Extension. You can correct any unusual name through Edit.")
@@ -1815,7 +1853,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.10 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.11 • Offline macOS App")
             }
         }
     }
