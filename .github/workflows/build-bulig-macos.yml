@@ -1,0 +1,122 @@
+name: Build BULIG macOS
+
+on:
+  push:
+    branches:
+      - bulig-macos-build
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout build branch
+        uses: actions/checkout@v4
+
+      - name: Prepare app resources
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p build
+          base64 --decode bulig-build/BuligLogo.jpg.b64 > build/BuligLogo.jpg
+
+          rm -rf build/BuligIcon.iconset
+          mkdir -p build/BuligIcon.iconset
+          sips -z 16 16 build/BuligLogo.jpg --out build/BuligIcon.iconset/icon_16x16.png
+          sips -z 32 32 build/BuligLogo.jpg --out build/BuligIcon.iconset/icon_16x16@2x.png
+          sips -z 32 32 build/BuligLogo.jpg --out build/BuligIcon.iconset/icon_32x32.png
+          sips -z 64 64 build/BuligLogo.jpg --out build/BuligIcon.iconset/icon_32x32@2x.png
+          sips -z 128 128 build/BuligLogo.jpg --out build/BuligIcon.iconset/icon_128x128.png
+          sips -z 256 256 build/BuligLogo.jpg --out build/BuligIcon.iconset/icon_128x128@2x.png
+          sips -z 256 256 build/BuligLogo.jpg --out build/BuligIcon.iconset/icon_256x256.png
+          sips -z 512 512 build/BuligLogo.jpg --out build/BuligIcon.iconset/icon_256x256@2x.png
+          sips -z 512 512 build/BuligLogo.jpg --out build/BuligIcon.iconset/icon_512x512.png
+          sips -z 1024 1024 build/BuligLogo.jpg --out build/BuligIcon.iconset/icon_512x512@2x.png
+          iconutil -c icns build/BuligIcon.iconset -o build/BuligIcon.icns
+
+      - name: Compile universal native app
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SDK="$(xcrun --sdk macosx --show-sdk-path)"
+          SRC="bulig-build/BULIGApp.swift"
+
+          xcrun swiftc -swift-version 5 -O -parse-as-library \
+            -target arm64-apple-macos13.0 -sdk "$SDK" \
+            -framework SwiftUI -framework AppKit \
+            "$SRC" -o build/BULIG-arm64
+
+          xcrun swiftc -swift-version 5 -O -parse-as-library \
+            -target x86_64-apple-macos13.0 -sdk "$SDK" \
+            -framework SwiftUI -framework AppKit \
+            "$SRC" -o build/BULIG-x86_64
+
+          lipo -create build/BULIG-arm64 build/BULIG-x86_64 -output build/BULIGRMSTeacher
+          lipo -info build/BULIGRMSTeacher
+
+      - name: Assemble app bundle
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APP="dist/BULIG RMS Teacher.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp build/BULIGRMSTeacher "$APP/Contents/MacOS/BULIGRMSTeacher"
+          chmod +x "$APP/Contents/MacOS/BULIGRMSTeacher"
+          cp build/BuligIcon.icns "$APP/Contents/Resources/BuligIcon.icns"
+          cp build/BuligLogo.jpg "$APP/Contents/Resources/BuligLogo.jpg"
+
+          cat > "$APP/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key><string>en</string>
+            <key>CFBundleExecutable</key><string>BULIGRMSTeacher</string>
+            <key>CFBundleIconFile</key><string>BuligIcon</string>
+            <key>CFBundleIdentifier</key><string>ph.bukidnon.buligrms.teacher</string>
+            <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+            <key>CFBundleName</key><string>BULIG RMS Teacher</string>
+            <key>CFBundleDisplayName</key><string>BULIG RMS Teacher</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>0.5</string>
+            <key>CFBundleVersion</key><string>5</string>
+            <key>LSMinimumSystemVersion</key><string>13.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+            <key>NSPrincipalClass</key><string>NSApplication</string>
+          </dict>
+          </plist>
+          PLIST
+
+          plutil -lint "$APP/Contents/Info.plist"
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+      - name: Create DMG installer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p dmgroot
+          cp -R "dist/BULIG RMS Teacher.app" dmgroot/
+          ln -s /Applications dmgroot/Applications
+          hdiutil create \
+            -volname "BULIG RMS Teacher" \
+            -srcfolder dmgroot \
+            -ov \
+            -format UDZO \
+            "BULIG_RMS_Teacher_Mac_v0.5.dmg"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "dist/BULIG RMS Teacher.app" \
+            "BULIG_RMS_Teacher_Mac_v0.5_App.zip"
+          ls -lh BULIG_RMS_Teacher_Mac_v0.5.dmg BULIG_RMS_Teacher_Mac_v0.5_App.zip
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BULIG-RMS-Teacher-Mac-v0.5
+          path: |
+            BULIG_RMS_Teacher_Mac_v0.5.dmg
+            BULIG_RMS_Teacher_Mac_v0.5_App.zip
+          if-no-files-found: error
+          retention-days: 7
