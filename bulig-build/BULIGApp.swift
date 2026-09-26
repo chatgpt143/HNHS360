@@ -95,7 +95,7 @@ struct Learner: Identifiable, Codable, Equatable {
             var pieces: [String] = []
             if !lastName.isEmpty { pieces.append(lastName.uppercased() + ",") }
             if !firstName.isEmpty { pieces.append(firstName.uppercased()) }
-            if !mi.isEmpty { pieces.append(mi.uppercased().prefix(1) + ".") }
+            if !mi.isEmpty { pieces.append(String(mi.uppercased().prefix(1)) + ".") }
             if !ext.isEmpty { pieces.append(ext.uppercased()) }
             return pieces.joined(separator: " ")
         }
