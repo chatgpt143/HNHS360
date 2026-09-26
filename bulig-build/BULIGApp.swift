@@ -34,10 +34,73 @@ struct Learner: Identifiable, Codable, Equatable {
     var id = UUID()
     var lrn = ""
     var fullName = ""
+    var firstName = ""
+    var middleInitial = ""
+    var lastName = ""
+    var nameExtension = ""
     var sex = ""
     var dateOfBirth = ""
     var pre = PreAssessment()
     var assessments: [String: AssessmentEntry] = [:]
+
+    enum CodingKeys: String, CodingKey {
+        case id, lrn, fullName, firstName, middleInitial, lastName, nameExtension, sex, dateOfBirth, pre, assessments
+    }
+
+    init(
+        id: UUID = UUID(),
+        lrn: String = "",
+        fullName: String = "",
+        firstName: String = "",
+        middleInitial: String = "",
+        lastName: String = "",
+        nameExtension: String = "",
+        sex: String = "",
+        dateOfBirth: String = "",
+        pre: PreAssessment = PreAssessment(),
+        assessments: [String: AssessmentEntry] = [:]
+    ) {
+        self.id = id
+        self.lrn = lrn
+        self.fullName = fullName
+        self.firstName = firstName
+        self.middleInitial = middleInitial
+        self.lastName = lastName
+        self.nameExtension = nameExtension
+        self.sex = sex
+        self.dateOfBirth = dateOfBirth
+        self.pre = pre
+        self.assessments = assessments
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        lrn = try c.decodeIfPresent(String.self, forKey: .lrn) ?? ""
+        fullName = try c.decodeIfPresent(String.self, forKey: .fullName) ?? ""
+        firstName = try c.decodeIfPresent(String.self, forKey: .firstName) ?? ""
+        middleInitial = try c.decodeIfPresent(String.self, forKey: .middleInitial) ?? ""
+        lastName = try c.decodeIfPresent(String.self, forKey: .lastName) ?? ""
+        nameExtension = try c.decodeIfPresent(String.self, forKey: .nameExtension) ?? ""
+        sex = try c.decodeIfPresent(String.self, forKey: .sex) ?? ""
+        dateOfBirth = try c.decodeIfPresent(String.self, forKey: .dateOfBirth) ?? ""
+        pre = try c.decodeIfPresent(PreAssessment.self, forKey: .pre) ?? PreAssessment()
+        assessments = try c.decodeIfPresent([String: AssessmentEntry].self, forKey: .assessments) ?? [:]
+    }
+
+    var displayName: String {
+        let mi = middleInitial.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ext = nameExtension.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !lastName.isEmpty || !firstName.isEmpty {
+            var pieces: [String] = []
+            if !lastName.isEmpty { pieces.append(lastName.uppercased() + ",") }
+            if !firstName.isEmpty { pieces.append(firstName.uppercased()) }
+            if !mi.isEmpty { pieces.append(mi.uppercased().prefix(1) + ".") }
+            if !ext.isEmpty { pieces.append(ext.uppercased()) }
+            return pieces.joined(separator: " ")
+        }
+        return fullName
+    }
 }
 
 struct AppData: Codable, Equatable {
@@ -144,7 +207,7 @@ final class AppStore: ObservableObject {
     private let appName = "BULIG RMS Teacher"
     private var printCoordinator: HTMLPrintCoordinator?
 
-    init() { load() }
+    init() { load(); migrateLearnerNameFields() }
 
     private var supportFolder: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -230,6 +293,113 @@ final class AppStore: ObservableObject {
         return level
     }
 
+    private func cleanedNameText(_ value: String) -> String {
+        value.replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func normalizedNameExtension(_ value: String) -> String? {
+        let token = value.uppercased()
+            .replacingOccurrences(of: ".", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let extensions = ["JR", "SR", "I", "II", "III", "IV", "V", "VI", "VII", "VIII"]
+        guard extensions.contains(token) else { return nil }
+        return token
+    }
+
+    private func splitSF1Name(_ rawValue: String) -> (firstName: String, middleInitial: String, lastName: String, extensionName: String) {
+        let raw = cleanedNameText(rawValue)
+        guard !raw.isEmpty else { return ("", "", "", "") }
+
+        let commaParts = raw.split(separator: ",", omittingEmptySubsequences: false)
+            .map { cleanedNameText(String($0)) }
+
+        let lastName = commaParts.first ?? ""
+
+        // Standard SF1 header:
+        // Last Name, First Name, Name Extension, Middle Name
+        if commaParts.count >= 4 {
+            let first = commaParts[1]
+            let ext = normalizedNameExtension(commaParts[2]) ?? commaParts[2].uppercased()
+            let middle = commaParts[3]
+            let mi = middle.first.map { String($0).uppercased() } ?? ""
+            return (first.uppercased(), mi, lastName.uppercased(), ext)
+        }
+
+        if commaParts.count == 3 {
+            let first = commaParts[1]
+            let third = commaParts[2]
+            if let ext = normalizedNameExtension(third) {
+                return (first.uppercased(), "", lastName.uppercased(), ext)
+            }
+            let mi = third.first.map { String($0).uppercased() } ?? ""
+            return (first.uppercased(), mi, lastName.uppercased(), "")
+        }
+
+        let remainder = commaParts.count >= 2 ? commaParts.dropFirst().joined(separator: " ") : raw
+        var tokens = cleanedNameText(remainder).split(separator: " ").map(String.init)
+        guard !tokens.isEmpty else { return ("", "", lastName.uppercased(), "") }
+
+        var extensionName = ""
+        if let extIndex = tokens.firstIndex(where: { normalizedNameExtension($0) != nil }) {
+            extensionName = normalizedNameExtension(tokens[extIndex]) ?? ""
+            tokens.remove(at: extIndex)
+        }
+
+        if tokens.count == 1 {
+            return (tokens[0].uppercased(), "", lastName.uppercased(), extensionName)
+        }
+
+        // In SF1, the middle name follows the first name and extension.
+        // Keep all preceding words as the first name so compound first names remain intact.
+        let middleName = tokens.removeLast()
+        let middleInitial = middleName.first.map { String($0).uppercased() } ?? ""
+        let firstName = tokens.joined(separator: " ").uppercased()
+        return (firstName, middleInitial, lastName.uppercased(), extensionName)
+    }
+
+    private func canonicalFullName(firstName: String, middleInitial: String, lastName: String, extensionName: String) -> String {
+        var pieces: [String] = []
+        if !lastName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            pieces.append(lastName.uppercased() + ",")
+        }
+        if !firstName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            pieces.append(firstName.uppercased())
+        }
+        if !nameExtensionSafe(extensionName).isEmpty {
+            pieces.append(nameExtensionSafe(extensionName))
+        }
+        if !middleInitial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            pieces.append(String(middleInitial.uppercased().prefix(1)) + ".")
+        }
+        return pieces.joined(separator: " ")
+    }
+
+    private func nameExtensionSafe(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalizedNameExtension(trimmed) ?? trimmed.uppercased()
+    }
+
+    private func migrateLearnerNameFields() {
+        var changed = false
+        for index in data.learners.indices {
+            let learner = data.learners[index]
+            if learner.firstName.isEmpty && learner.lastName.isEmpty && !learner.fullName.isEmpty {
+                let parts = splitSF1Name(learner.fullName)
+                data.learners[index].firstName = parts.firstName
+                data.learners[index].middleInitial = parts.middleInitial
+                data.learners[index].lastName = parts.lastName
+                data.learners[index].nameExtension = parts.extensionName
+                changed = true
+            }
+        }
+        if changed { save() }
+    }
+
     func importFromClipboard() -> Int {
         guard let text = NSPasteboard.general.string(forType: .string),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return 0 }
@@ -246,7 +416,17 @@ final class AppStore: ObservableObject {
             let sexRaw = cols.count > 2 ? cols[2].uppercased() : ""
             let sex = ["M", "MALE"].contains(sexRaw) ? "Male" : (["F", "FEMALE"].contains(sexRaw) ? "Female" : "")
             let dob = cols.count > 3 ? cols[3] : ""
-            data.learners.append(Learner(lrn: maybeLRN, fullName: cols[1], sex: sex, dateOfBirth: dob))
+            let nameParts = splitSF1Name(cols[1])
+            data.learners.append(Learner(
+                lrn: maybeLRN,
+                fullName: cols[1],
+                firstName: nameParts.firstName,
+                middleInitial: nameParts.middleInitial,
+                lastName: nameParts.lastName,
+                nameExtension: nameParts.extensionName,
+                sex: sex,
+                dateOfBirth: dob
+            ))
             added += 1
         }
         save()
@@ -415,10 +595,15 @@ final class AppStore: ObservableObject {
                     sex = ""
                 }
 
+                let nameParts = splitSF1Name(name)
                 data.learners.append(
                     Learner(
                         lrn: lrn,
                         fullName: name,
+                        firstName: nameParts.firstName,
+                        middleInitial: nameParts.middleInitial,
+                        lastName: nameParts.lastName,
+                        nameExtension: nameParts.extensionName,
                         sex: sex,
                         dateOfBirth: birthDate
                     )
@@ -692,7 +877,7 @@ final class AppStore: ObservableObject {
             let rows = staged.filter { $0.0.sex == sex }.map { learner, level -> String in
                 number += 1
                 let info = readingLevels.first(where: { $0.code == level })
-                return "<tr><td>\(number)</td><td class=\"left\">\(htmlEscape(learner.fullName))</td><td>\(htmlEscape(info?.area.capitalized ?? ""))</td><td>\(htmlEscape(level))</td><td style=\"background:\(levelColor(level))\">\(htmlEscape(level))</td></tr>"
+                return "<tr><td>\(number)</td><td class=\"left\">\(htmlEscape(learner.displayName))</td><td>\(htmlEscape(info?.area.capitalized ?? ""))</td><td>\(htmlEscape(level))</td><td style=\"background:\(levelColor(level))\">\(htmlEscape(level))</td></tr>"
             }.joined()
             return "<tr><td colspan=\"5\" class=\"group\">\(sex.uppercased())</td></tr>" + (rows.isEmpty ? "<tr><td colspan=\"5\">—</td></tr>" : rows)
         }
@@ -997,7 +1182,10 @@ struct LearnersView: View {
     @State private var showImportAlert = false
     @State private var editingLearnerID: UUID? = nil
     @State private var editLRN = ""
-    @State private var editName = ""
+    @State private var editFirstName = ""
+    @State private var editMiddleInitial = ""
+    @State private var editLastName = ""
+    @State private var editExtension = ""
     @State private var editSex = ""
     @State private var editDOB = ""
     @State private var learnerToRemove: Learner? = nil
@@ -1005,7 +1193,10 @@ struct LearnersView: View {
     private func beginEdit(_ learner: Learner) {
         editingLearnerID = learner.id
         editLRN = learner.lrn
-        editName = learner.fullName
+        editFirstName = learner.firstName
+        editMiddleInitial = learner.middleInitial
+        editLastName = learner.lastName
+        editExtension = learner.nameExtension
         editSex = learner.sex
         editDOB = learner.dateOfBirth
     }
@@ -1014,8 +1205,19 @@ struct LearnersView: View {
         guard let id = editingLearnerID,
               let index = store.data.learners.firstIndex(where: { $0.id == id }) else { return }
 
+        let first = editFirstName.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let mi = String(editMiddleInitial.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().prefix(1))
+        let last = editLastName.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let ext = editExtension.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+
         store.data.learners[index].lrn = editLRN.filter(\.isNumber)
-        store.data.learners[index].fullName = editName.trimmingCharacters(in: .whitespacesAndNewlines)
+        store.data.learners[index].firstName = first
+        store.data.learners[index].middleInitial = mi
+        store.data.learners[index].lastName = last
+        store.data.learners[index].nameExtension = ext
+        store.data.learners[index].fullName = [last.isEmpty ? "" : last + ",", first, ext, mi.isEmpty ? "" : mi + "."]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
         store.data.learners[index].sex = editSex
         store.data.learners[index].dateOfBirth = editDOB.trimmingCharacters(in: .whitespacesAndNewlines)
         store.save()
@@ -1044,7 +1246,7 @@ struct LearnersView: View {
 
                 Button {
                     if let message = store.importSF1File() {
-                        importMessage = message
+                        importMessage = message + "\nNames were organized into First Name, Middle Initial, Last Name, and Extension."
                         showImportAlert = true
                     }
                 } label: {
@@ -1055,7 +1257,7 @@ struct LearnersView: View {
                 Button {
                     let n = store.importFromClipboard()
                     importMessage = n > 0
-                        ? "Paste import completed.\nImported \(n) learner(s)."
+                        ? "Paste import completed.\nImported \(n) learner(s).\nNames were organized into separate name fields."
                         : "No valid new learners found. Copy tab-separated SF1 rows first."
                     showImportAlert = true
                 } label: {
@@ -1067,30 +1269,44 @@ struct LearnersView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Text("Import SF1 accepts DepEd Excel files (.xls, .xlsx, .xlsm) and reads LRN, Name, Sex, and Birth Date automatically.")
+            Text("SF1 NAME is automatically separated into Last Name, First Name, Middle Initial, and Extension. You can correct any unusual name through Edit.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            HStack(spacing: 10) {
+                Text("Last Name").bold().frame(width: 145, alignment: .leading)
+                Text("First Name").bold().frame(width: 185, alignment: .leading)
+                Text("MI").bold().frame(width: 38, alignment: .leading)
+                Text("Ext.").bold().frame(width: 55, alignment: .leading)
+                Text("LRN").bold().frame(width: 125, alignment: .leading)
+                Text("Sex").bold().frame(width: 60, alignment: .leading)
+                Text("Birth Date").bold().frame(width: 95, alignment: .leading)
+                Spacer()
+                Text("Actions").bold().frame(width: 165, alignment: .center)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+
             List {
                 ForEach(store.data.learners) { learner in
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(learner.fullName.isEmpty ? "Unnamed learner" : learner.fullName)
-                                .bold()
-                            HStack(spacing: 12) {
-                                Text(learner.lrn.isEmpty ? "No LRN" : learner.lrn)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(learner.sex.isEmpty ? "Sex not set" : learner.sex)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                if !learner.dateOfBirth.isEmpty {
-                                    Text(learner.dateOfBirth)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
+                    HStack(spacing: 10) {
+                        Text(learner.lastName.isEmpty ? "—" : learner.lastName)
+                            .frame(width: 145, alignment: .leading)
+                            .bold()
+                        Text(learner.firstName.isEmpty ? "—" : learner.firstName)
+                            .frame(width: 185, alignment: .leading)
+                        Text(learner.middleInitial.isEmpty ? "—" : learner.middleInitial)
+                            .frame(width: 38, alignment: .leading)
+                        Text(learner.nameExtension.isEmpty ? "—" : learner.nameExtension)
+                            .frame(width: 55, alignment: .leading)
+                        Text(learner.lrn.isEmpty ? "—" : learner.lrn)
+                            .font(.caption.monospacedDigit())
+                            .frame(width: 125, alignment: .leading)
+                        Text(learner.sex.isEmpty ? "—" : learner.sex)
+                            .frame(width: 60, alignment: .leading)
+                        Text(learner.dateOfBirth.isEmpty ? "—" : learner.dateOfBirth)
+                            .frame(width: 95, alignment: .leading)
 
                         Spacer()
 
@@ -1124,7 +1340,10 @@ struct LearnersView: View {
 
                 Form {
                     TextField("LRN", text: $editLRN)
-                    TextField("Learner Name", text: $editName)
+                    TextField("First Name", text: $editFirstName)
+                    TextField("Middle Initial", text: $editMiddleInitial)
+                    TextField("Last Name", text: $editLastName)
+                    TextField("Extension (Jr., Sr., II, III, etc.)", text: $editExtension)
                     Picker("Sex", selection: $editSex) {
                         Text("Select").tag("")
                         Text("Male").tag("Male")
@@ -1142,11 +1361,14 @@ struct LearnersView: View {
                         saveEdit()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(editName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(
+                        editFirstName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                        editLastName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    )
                 }
             }
             .padding(24)
-            .frame(width: 520, height: 330)
+            .frame(width: 560, height: 430)
         }
         .alert("SF1 Import", isPresented: $showImportAlert) {
             Button("OK", role: .cancel) { }
@@ -1164,7 +1386,7 @@ struct LearnersView: View {
                 removeConfirmedLearner()
             }
         } message: {
-            let name = learnerToRemove?.fullName.isEmpty == false ? learnerToRemove!.fullName : "this learner"
+            let name = learnerToRemove?.displayName.isEmpty == false ? learnerToRemove!.displayName : "this learner"
             Text("Remove \(name)? This will also delete the learner's pre-assessment and AP1–AP15 records.")
         }
     }
@@ -1191,7 +1413,7 @@ struct PreAssessmentView: View {
                 ForEach($store.data.learners) { $learner in
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text(learner.fullName.isEmpty ? "Unnamed learner" : learner.fullName)
+                            Text(learner.displayName.isEmpty ? "Unnamed learner" : learner.displayName)
                                 .bold()
                                 .frame(minWidth: 220, alignment: .leading)
                             Picker("Initial Level", selection: $learner.pre.level) {
@@ -1267,7 +1489,7 @@ struct MonitoringView: View {
             List {
                 ForEach(store.data.learners) { learner in
                     HStack(spacing: 12) {
-                        Text(learner.fullName.isEmpty ? "Unnamed learner" : learner.fullName)
+                        Text(learner.displayName.isEmpty ? "Unnamed learner" : learner.displayName)
                             .frame(minWidth: 240, alignment: .leading)
                             .bold()
                         VStack(alignment: .leading) {
@@ -1373,7 +1595,7 @@ struct ReportsView: View {
                             Divider()
                             ForEach(store.learnersForStage(stage).prefix(12), id: \.0.id) { learner, level in
                                 HStack {
-                                    Text(learner.fullName.isEmpty ? "Unnamed learner" : learner.fullName).frame(minWidth: 300, alignment: .leading)
+                                    Text(learner.displayName.isEmpty ? "Unnamed learner" : learner.displayName).frame(minWidth: 300, alignment: .leading)
                                     Text(learner.sex).frame(width: 70, alignment: .leading)
                                     Text(level.isEmpty ? "—" : level).monospaced().bold()
                                 }
@@ -1439,7 +1661,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.8 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.9 • Offline macOS App")
             }
         }
     }
