@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import WebKit
 import JavaScriptCore
+import PDFKit
 
 struct SchoolSettings: Codable, Equatable {
     var schoolName = ""
@@ -188,113 +189,582 @@ enum PrintoutType: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-enum ReportOutput {
-    case print
-    case preview
-    case savePDF(URL)
+
+struct NativeCRMLevelRow {
+    let level: String
+    let area: String
+    let male: Int
+    let female: Int
+    let total: Int
 }
 
-final class HTMLPrintCoordinator: NSObject, WKNavigationDelegate {
-    private let webView: WKWebView
-    private let orientation: NSPrintInfo.PaperOrientation
-    private let output: ReportOutput
-    private let completion: (Bool) -> Void
-    private var hostWindow: NSWindow?
+struct NativeProfileRow {
+    let label: String
+    let bosyMale: Int
+    let bosyFemale: Int
+    let mosyMale: Int
+    let mosyFemale: Int
+    let eosyMale: Int
+    let eosyFemale: Int
+}
 
-    init(
-        html: String,
-        orientation: NSPrintInfo.PaperOrientation,
-        output: ReportOutput,
-        completion: @escaping (Bool) -> Void
+struct NativePupilRow {
+    let name: String
+    let sex: String
+    let area: String
+    let level: String
+}
+
+struct NativeReportSnapshot {
+    let settings: SchoolSettings
+    let stage: String
+    let term: String
+    let keyStage: Int
+    let crmRows: [NativeCRMLevelRow]
+    let profileRows: [NativeProfileRow]
+    let bosyTotal: Int
+    let mosyTotal: Int
+    let eosyTotal: Int
+    let pupils: [NativePupilRow]
+    let maleCount: Int
+    let femaleCount: Int
+    let generatedAt: String
+}
+
+final class NativeReportView: NSView {
+    let type: PrintoutType
+    let snapshot: NativeReportSnapshot
+    let paperSize: NSSize
+    let pageCount: Int
+
+    private let leftMargin: CGFloat = 72
+    private let rightMargin: CGFloat = 72
+    private let topMargin: CGFloat = 36
+    private let bottomMargin: CGFloat = 36
+
+    private let bodyFontSize: CGFloat = 12
+
+    init(type: PrintoutType, snapshot: NativeReportSnapshot) {
+        self.type = type
+        self.snapshot = snapshot
+
+        if type == .classroomMonitoring {
+            self.paperSize = NSSize(width: 841.89, height: 595.28)
+            self.pageCount = 1
+        } else {
+            self.paperSize = NSSize(width: 595.28, height: 841.89)
+            let entryCount = snapshot.pupils.count + 2 // Male/Female group labels
+            self.pageCount = max(1, Int(ceil(Double(entryCount) / 16.0)))
+        }
+
+        super.init(frame: NSRect(
+            x: 0,
+            y: 0,
+            width: paperSize.width,
+            height: paperSize.height * CGFloat(pageCount)
+        ))
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isFlipped: Bool { true }
+
+    private func font(_ size: CGFloat, bold: Bool = false) -> NSFont {
+        let name = bold ? "Arial-BoldMT" : "Arial"
+        return NSFont(name: name, size: size) ?? (bold ? .boldSystemFont(ofSize: size) : .systemFont(ofSize: size))
+    }
+
+    private func paragraph(_ alignment: NSTextAlignment) -> NSMutableParagraphStyle {
+        let p = NSMutableParagraphStyle()
+        p.alignment = alignment
+        p.lineBreakMode = .byWordWrapping
+        return p
+    }
+
+    private func drawText(
+        _ text: String,
+        in rect: NSRect,
+        size: CGFloat = 12,
+        bold: Bool = false,
+        alignment: NSTextAlignment = .left,
+        color: NSColor = .black,
+        verticalCenter: Bool = true
     ) {
-        let width: CGFloat = orientation == .landscape ? 1120 : 790
-        self.webView = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: 1400))
-        self.orientation = orientation
-        self.output = output
-        self.completion = completion
-        super.init()
-
-        webView.navigationDelegate = self
-        webView.setValue(false, forKey: "drawsBackground")
-
-        // Keep the web view attached to a real AppKit window while rendering.
-        // Printing an unattached WKWebView can result in a blank PDF on macOS.
-        let window = NSWindow(
-            contentRect: NSRect(x: -12000, y: -12000, width: width, height: 1400),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font(size, bold: bold),
+            .foregroundColor: color,
+            .paragraphStyle: paragraph(alignment)
+        ]
+        let str = NSAttributedString(string: text, attributes: attrs)
+        let options: NSString.DrawingOptions = [.usesLineFragmentOrigin, .usesFontLeading]
+        let measured = str.boundingRect(
+            with: NSSize(width: rect.width, height: .greatestFiniteMagnitude),
+            options: options
         )
-        window.isReleasedWhenClosed = false
-        window.backgroundColor = .white
-        window.alphaValue = 0.01
-        window.contentView = webView
-        window.orderBack(nil)
-        hostWindow = window
-
-        webView.loadHTMLString(html, baseURL: Bundle.main.resourceURL)
+        let y = verticalCenter ? rect.minY + max(0, (rect.height - measured.height) / 2) : rect.minY
+        str.draw(with: NSRect(x: rect.minX, y: y, width: rect.width, height: max(rect.height, measured.height)),
+                 options: options)
     }
 
-    private func printInfo() -> NSPrintInfo {
-        let info = NSPrintInfo.shared.copy() as! NSPrintInfo
-        info.paperSize = NSSize(width: 595.2, height: 841.8) // A4
-        info.orientation = orientation
-        info.leftMargin = 72
-        info.rightMargin = 72
-        info.topMargin = 36
-        info.bottomMargin = 36
-        info.horizontalPagination = .fit
-        info.verticalPagination = .automatic
-        info.isHorizontallyCentered = true
-        info.isVerticallyCentered = false
-        return info
+    private func stroke(_ rect: NSRect, width: CGFloat = 1.0) {
+        NSColor.black.setStroke()
+        let path = NSBezierPath(rect: rect)
+        path.lineWidth = width
+        path.stroke()
     }
 
-    private func finish(_ success: Bool) {
-        hostWindow?.orderOut(nil)
-        hostWindow?.close()
-        hostWindow = nil
-        completion(success)
+    private func fill(_ rect: NSRect, color: NSColor) {
+        color.setFill()
+        NSBezierPath(rect: rect).fill()
     }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        // Give local images, CSS, and WebKit's print layout time to finish.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-            let info = self.printInfo()
+    private func cell(
+        _ text: String,
+        rect: NSRect,
+        fillColor: NSColor? = nil,
+        bold: Bool = false,
+        alignment: NSTextAlignment = .center,
+        size: CGFloat = 12,
+        borderWidth: CGFloat = 1.0
+    ) {
+        if let fillColor { fill(rect, color: fillColor) }
+        stroke(rect, width: borderWidth)
+        drawText(text, in: rect.insetBy(dx: 3, dy: 2), size: size, bold: bold, alignment: alignment)
+    }
 
-            switch self.output {
-            case .print:
-                info.jobDisposition = .spool
-                let op = webView.printOperation(with: info)
-                op.showsPrintPanel = true
-                op.showsProgressPanel = true
-                self.finish(op.run())
+    private func colorForLevel(_ level: String) -> NSColor {
+        switch level {
+        case "LEVEL 1": return NSColor(calibratedRed: 1.0, green: 0.84, blue: 0.82, alpha: 1)
+        case "LEVEL 2A": return NSColor(calibratedRed: 1.0, green: 0.90, blue: 0.72, alpha: 1)
+        case "LEVEL 2B": return NSColor(calibratedRed: 1.0, green: 0.94, blue: 0.66, alpha: 1)
+        case "LEVEL 3A": return NSColor(calibratedRed: 0.88, green: 0.95, blue: 0.72, alpha: 1)
+        case "LEVEL 3B": return NSColor(calibratedRed: 0.79, green: 0.93, blue: 0.76, alpha: 1)
+        case "LEVEL 4": return NSColor(calibratedRed: 0.75, green: 0.91, blue: 0.94, alpha: 1)
+        case "LEVEL 5": return NSColor(calibratedRed: 0.80, green: 0.86, blue: 0.97, alpha: 1)
+        case "LEVEL 6": return NSColor(calibratedRed: 0.84, green: 0.81, blue: 0.96, alpha: 1)
+        case "LEVEL 7": return NSColor(calibratedRed: 0.92, green: 0.82, blue: 0.95, alpha: 1)
+        default: return .white
+        }
+    }
 
-            case .preview:
-                info.jobDisposition = .preview
-                let op = webView.printOperation(with: info)
-                op.showsPrintPanel = false
-                op.showsProgressPanel = true
-                self.finish(op.run())
+    private func drawLogo(in rect: NSRect) {
+        guard let url = Bundle.main.url(forResource: "BuligLogo", withExtension: "jpg"),
+              let image = NSImage(contentsOf: url) else { return }
+        image.draw(
+            in: rect,
+            from: .zero,
+            operation: .sourceOver,
+            fraction: 1,
+            respectFlipped: true,
+            hints: nil
+        )
+    }
 
-            case .savePDF(let url):
-                info.jobDisposition = .save
-                info.dictionary()[NSPrintInfo.AttributeKey.jobSavingURL] = url as NSURL
-                let op = webView.printOperation(with: info)
-                op.showsPrintPanel = false
-                op.showsProgressPanel = true
-                let success = op.run() && FileManager.default.fileExists(atPath: url.path)
-                self.finish(success)
+    private func drawHeader(pageOriginY: CGFloat, title: String) -> CGFloat {
+        let x = leftMargin
+        let w = paperSize.width - leftMargin - rightMargin
+        var y = pageOriginY + topMargin
+
+        let brandH: CGFloat = 48
+        drawText("DepEd\nBukidnon",
+                 in: NSRect(x: x, y: y, width: 105, height: brandH),
+                 size: 15, bold: true, alignment: .center,
+                 color: NSColor(calibratedRed: 0.07, green: 0.29, blue: 0.57, alpha: 1))
+
+        let agencyRect = NSRect(x: x + 110, y: y, width: w - 250, height: brandH)
+        let agency = [
+            "Department of Education",
+            snapshot.settings.region,
+            snapshot.settings.division,
+            snapshot.settings.schoolName
+        ].filter { !$0.isEmpty }.joined(separator: "\n")
+        drawText(agency, in: agencyRect, size: 10.5, bold: false, alignment: .center)
+
+        drawLogo(in: NSRect(x: x + w - 125, y: y + 1, width: 125, height: brandH - 2))
+        y += brandH
+
+        drawText("BUKIDNON'S UNIFIED LITERACY AND INTERVENTION GATEWAY",
+                 in: NSRect(x: x, y: y, width: w, height: 16),
+                 size: 12, bold: true, alignment: .center)
+        y += 16
+
+        drawText("Building Up Literacy, Inspiring Growth",
+                 in: NSRect(x: x, y: y, width: w, height: 14),
+                 size: 12, bold: true, alignment: .center)
+        y += 14
+
+        drawText(title,
+                 in: NSRect(x: x, y: y, width: w, height: 22),
+                 size: 16, bold: true, alignment: .center)
+        y += 24
+
+        let rowH: CGFloat = 20
+        let widths = [w * 0.18, w * 0.32, w * 0.18, w * 0.32]
+        let rows: [[String]] = [
+            ["Adviser", snapshot.settings.adviser, "ASSESSMENT PERIOD", snapshot.stage],
+            ["Grade Level", snapshot.settings.gradeLevel, "Term", snapshot.term],
+            ["Section", snapshot.settings.section, "Assessment Tool", snapshot.settings.assessmentTool],
+            ["", "", "SUBJECT", snapshot.settings.subject]
+        ]
+
+        for r in rows {
+            var cx = x
+            for i in 0..<4 {
+                cell(
+                    r[i],
+                    rect: NSRect(x: cx, y: y, width: widths[i], height: rowH),
+                    bold: i == 0 || i == 2,
+                    alignment: i == 0 || i == 2 ? .center : .left,
+                    size: bodyFontSize,
+                    borderWidth: 1.1
+                )
+                cx += widths[i]
+            }
+            y += rowH
+        }
+
+        return y
+    }
+
+    private func drawCRM(pageIndex: Int) {
+        let pageY = CGFloat(pageIndex) * paperSize.height
+        let x = leftMargin
+        let w = paperSize.width - leftMargin - rightMargin
+        var y = drawHeader(pageOriginY: pageY, title: "CLASSROOM READING MONITORING REPORT") + 6
+
+        let labelW: CGFloat = 50
+        let totalW: CGFloat = 46
+        let levelW = (w - labelW - totalW) / CGFloat(max(snapshot.crmRows.count, 1))
+        let headerH: CGFloat = 32
+
+        cell("", rect: NSRect(x: x, y: y, width: labelW, height: headerH),
+             fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true)
+        var cx = x + labelW
+        for row in snapshot.crmRows {
+            cell("", rect: NSRect(x: cx, y: y, width: levelW, height: headerH),
+                 fillColor: NSColor(calibratedWhite: 0.85, alpha: 1))
+            drawText(row.level.replacingOccurrences(of: "LEVEL", with: "Level"),
+                     in: NSRect(x: cx + 2, y: y + 2, width: levelW - 4, height: 12),
+                     size: 8.8, bold: true, alignment: .center)
+            drawText(row.area.capitalized,
+                     in: NSRect(x: cx + 2, y: y + 14, width: levelW - 4, height: 16),
+                     size: 6.6, bold: false, alignment: .center)
+            cx += levelW
+        }
+        cell("Total", rect: NSRect(x: cx, y: y, width: totalW, height: headerH),
+             fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 10)
+        y += headerH
+
+        let dataH: CGFloat = 20
+        let totalMale = snapshot.crmRows.reduce(0) { $0 + $1.male }
+        let totalFemale = snapshot.crmRows.reduce(0) { $0 + $1.female }
+        let rowDefs: [(String, [Int], Int, Bool)] = [
+            ("Male", snapshot.crmRows.map { $0.male }, totalMale, false),
+            ("Female", snapshot.crmRows.map { $0.female }, totalFemale, false),
+            ("Total", snapshot.crmRows.map { $0.total }, totalMale + totalFemale, true)
+        ]
+        for def in rowDefs {
+            cell(def.0, rect: NSRect(x: x, y: y, width: labelW, height: dataH),
+                 bold: def.3, alignment: .left, size: 10)
+            cx = x + labelW
+            for v in def.1 {
+                cell(String(v), rect: NSRect(x: cx, y: y, width: levelW, height: dataH),
+                     bold: def.3, size: 10)
+                cx += levelW
+            }
+            cell(String(def.2), rect: NSRect(x: cx, y: y, width: totalW, height: dataH),
+                 bold: true, size: 10)
+            y += dataH
+        }
+
+        y += 8
+
+        if snapshot.keyStage > 0 {
+            let groupW = w / 3
+            let profileW = groupW * 0.50
+            let countW = groupW * 0.25
+
+            cell("KEY STAGE \(snapshot.keyStage)",
+                 rect: NSRect(x: x, y: y, width: w, height: 18),
+                 fillColor: NSColor(calibratedWhite: 0.85, alpha: 1),
+                 bold: true, size: 11)
+            y += 18
+
+            cx = x
+            for heading in ["BOSY", "MOSY", "EOSY"] {
+                cell(heading, rect: NSRect(x: cx, y: y, width: groupW, height: 18),
+                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1),
+                     bold: true, size: 10)
+                cx += groupW
+            }
+            y += 18
+
+            cx = x
+            for _ in 0..<3 {
+                cell("Reading Profile", rect: NSRect(x: cx, y: y, width: profileW, height: 24),
+                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 9)
+                cx += profileW
+                cell("Male", rect: NSRect(x: cx, y: y, width: countW, height: 24),
+                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 9)
+                cx += countW
+                cell("Female", rect: NSRect(x: cx, y: y, width: countW, height: 24),
+                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 9)
+                cx += countW
+            }
+            y += 24
+
+            let profileH: CGFloat = 19
+            for p in snapshot.profileRows {
+                let values: [(String, Int, Int)] = [
+                    (p.label, p.bosyMale, p.bosyFemale),
+                    (p.label, p.mosyMale, p.mosyFemale),
+                    (p.label, p.eosyMale, p.eosyFemale)
+                ]
+                cx = x
+                for v in values {
+                    cell(v.0, rect: NSRect(x: cx, y: y, width: profileW, height: profileH),
+                         alignment: .left, size: 9.5)
+                    cx += profileW
+                    cell(String(v.1), rect: NSRect(x: cx, y: y, width: countW, height: profileH), size: 10)
+                    cx += countW
+                    cell(String(v.2), rect: NSRect(x: cx, y: y, width: countW, height: profileH), size: 10)
+                    cx += countW
+                }
+                y += profileH
+            }
+
+            let totals = [snapshot.bosyTotal, snapshot.mosyTotal, snapshot.eosyTotal]
+            cx = x
+            for total in totals {
+                cell("Total", rect: NSRect(x: cx, y: y, width: profileW, height: profileH),
+                     bold: true, alignment: .left, size: 10)
+                cx += profileW
+                cell(String(total), rect: NSRect(x: cx, y: y, width: countW * 2, height: profileH),
+                     bold: true, size: 10)
+                cx += countW * 2
+            }
+            y += profileH
+        } else {
+            cell("Set the Grade Level in Setup. Only the applicable Key Stage is printed.",
+                 rect: NSRect(x: x, y: y, width: w, height: 32),
+                 fillColor: NSColor(calibratedRed: 1, green: 0.92, blue: 0.92, alpha: 1),
+                 bold: true, alignment: .left, size: 10)
+            y += 32
+        }
+
+        let signatureTop = min(pageY + paperSize.height - bottomMargin - 42, y + 5)
+        let sigW = (w - 110) / 2
+        drawText("Submitted by:", in: NSRect(x: x, y: signatureTop, width: sigW, height: 15), size: 10)
+        drawText("Noted by:", in: NSRect(x: x + sigW + 30, y: signatureTop, width: sigW, height: 15), size: 10)
+
+        let lineY = signatureTop + 24
+        NSColor.black.setStroke()
+        let p1 = NSBezierPath()
+        p1.move(to: NSPoint(x: x + 15, y: lineY))
+        p1.line(to: NSPoint(x: x + sigW - 15, y: lineY))
+        p1.stroke()
+        let p2 = NSBezierPath()
+        p2.move(to: NSPoint(x: x + sigW + 45, y: lineY))
+        p2.line(to: NSPoint(x: x + sigW * 2 + 15, y: lineY))
+        p2.stroke()
+
+        drawText(snapshot.settings.adviser,
+                 in: NSRect(x: x, y: lineY - 15, width: sigW, height: 18),
+                 size: 10.5, bold: true, alignment: .center)
+        drawText(snapshot.settings.schoolHead,
+                 in: NSRect(x: x + sigW + 30, y: lineY - 15, width: sigW, height: 18),
+                 size: 10.5, bold: true, alignment: .center)
+        drawText("Class Adviser",
+                 in: NSRect(x: x, y: lineY + 2, width: sigW, height: 14),
+                 size: 9.5, alignment: .center)
+        drawText(snapshot.settings.schoolHeadPosition,
+                 in: NSRect(x: x + sigW + 30, y: lineY + 2, width: sigW, height: 14),
+                 size: 9.5, alignment: .center)
+
+        drawText(snapshot.generatedAt,
+                 in: NSRect(x: x + w - 105, y: lineY - 15, width: 105, height: 18),
+                 size: 9, alignment: .center)
+        drawText("Date Generated",
+                 in: NSRect(x: x + w - 105, y: lineY + 2, width: 105, height: 14),
+                 size: 8.5, alignment: .center)
+    }
+
+    private enum ListEntry {
+        case group(String)
+        case pupil(Int, NativePupilRow)
+    }
+
+    private func allListEntries() -> [ListEntry] {
+        var entries: [ListEntry] = []
+        var maleNo = 0
+        var femaleNo = 0
+
+        entries.append(.group("MALE"))
+        for p in snapshot.pupils.filter({ $0.sex == "Male" }) {
+            maleNo += 1
+            entries.append(.pupil(maleNo, p))
+        }
+
+        entries.append(.group("FEMALE"))
+        for p in snapshot.pupils.filter({ $0.sex == "Female" }) {
+            femaleNo += 1
+            entries.append(.pupil(femaleNo, p))
+        }
+        return entries
+    }
+
+    private func drawPupilList(pageIndex: Int) {
+        let pageY = CGFloat(pageIndex) * paperSize.height
+        let x = leftMargin
+        let w = paperSize.width - leftMargin - rightMargin
+        var y = drawHeader(pageOriginY: pageY, title: "LIST OF PUPILS") + 8
+
+        let widths: [CGFloat] = [30, 165, 92, 78, w - 30 - 165 - 92 - 78]
+        let headerH: CGFloat = 28
+        let headers = ["NO.", "LEARNER", "Reading Level", "Component/Level", "Color Coding"]
+        var cx = x
+        for i in 0..<headers.count {
+            cell(headers[i], rect: NSRect(x: cx, y: y, width: widths[i], height: headerH),
+                 fillColor: NSColor(calibratedWhite: 0.85, alpha: 1),
+                 bold: true, size: 9)
+            cx += widths[i]
+        }
+        y += headerH
+
+        let entries = allListEntries()
+        let start = pageIndex * 16
+        let end = min(entries.count, start + 16)
+        let rowH: CGFloat = 26
+
+        if start < end {
+            for entry in entries[start..<end] {
+                switch entry {
+                case .group(let label):
+                    cell(label, rect: NSRect(x: x, y: y, width: w, height: rowH),
+                         fillColor: NSColor(calibratedWhite: 0.90, alpha: 1),
+                         bold: true, size: 11)
+                case .pupil(let n, let pupil):
+                    let values = [String(n), pupil.name, pupil.area.capitalized, pupil.level, pupil.level]
+                    cx = x
+                    for i in 0..<5 {
+                        let fillColor: NSColor? = i == 4 ? colorForLevel(pupil.level) : nil
+                        cell(values[i],
+                             rect: NSRect(x: cx, y: y, width: widths[i], height: rowH),
+                             fillColor: fillColor,
+                             bold: i == 1,
+                             alignment: i == 1 ? .left : .center,
+                             size: i == 2 ? 8.2 : 10)
+                        cx += widths[i]
+                    }
+                }
+                y += rowH
+            }
+        }
+
+        if pageIndex == pageCount - 1 {
+            y += 10
+            let summaryW = min(w * 0.68, 310)
+            let col = summaryW / 4
+            cell("TOTAL ENROLLMENT:", rect: NSRect(x: x, y: y, width: col * 2, height: 22),
+                 bold: true, alignment: .left, size: 10)
+            cell(String(snapshot.maleCount + snapshot.femaleCount),
+                 rect: NSRect(x: x + col * 2, y: y, width: col, height: 22),
+                 bold: true, size: 10)
+            cell("MALE: \(snapshot.maleCount)",
+                 rect: NSRect(x: x + col * 3, y: y, width: col, height: 22),
+                 bold: true, size: 9)
+            y += 22
+            cell("FEMALE: \(snapshot.femaleCount)",
+                 rect: NSRect(x: x + col * 3, y: y, width: col, height: 22),
+                 bold: true, size: 9)
+            y += 30
+
+            let sigW = (w - 30) / 2
+            drawText("Submitted by:", in: NSRect(x: x, y: y, width: sigW, height: 14), size: 10)
+            drawText("Noted by:", in: NSRect(x: x + sigW + 30, y: y, width: sigW, height: 14), size: 10)
+            let lineY = y + 24
+
+            let p1 = NSBezierPath()
+            p1.move(to: NSPoint(x: x + 10, y: lineY))
+            p1.line(to: NSPoint(x: x + sigW - 10, y: lineY))
+            p1.stroke()
+            let p2 = NSBezierPath()
+            p2.move(to: NSPoint(x: x + sigW + 40, y: lineY))
+            p2.line(to: NSPoint(x: x + sigW * 2 + 20, y: lineY))
+            p2.stroke()
+
+            drawText(snapshot.settings.adviser,
+                     in: NSRect(x: x, y: lineY - 15, width: sigW, height: 18),
+                     size: 10.5, bold: true, alignment: .center)
+            drawText(snapshot.settings.schoolHead,
+                     in: NSRect(x: x + sigW + 30, y: lineY - 15, width: sigW, height: 18),
+                     size: 10.5, bold: true, alignment: .center)
+            drawText("Class Adviser",
+                     in: NSRect(x: x, y: lineY + 2, width: sigW, height: 14),
+                     size: 9.5, alignment: .center)
+            drawText(snapshot.settings.schoolHeadPosition,
+                     in: NSRect(x: x + sigW + 30, y: lineY + 2, width: sigW, height: 14),
+                     size: 9.5, alignment: .center)
+
+            drawText(snapshot.generatedAt,
+                     in: NSRect(x: x, y: pageY + paperSize.height - bottomMargin - 16, width: w, height: 14),
+                     size: 8.5, alignment: .right)
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        NSColor.white.setFill()
+        dirtyRect.fill()
+
+        for pageIndex in 0..<pageCount {
+            let pageRect = NSRect(
+                x: 0,
+                y: CGFloat(pageIndex) * paperSize.height,
+                width: paperSize.width,
+                height: paperSize.height
+            )
+            guard dirtyRect.intersects(pageRect) else { continue }
+
+            if type == .classroomMonitoring {
+                drawCRM(pageIndex: pageIndex)
+            } else {
+                drawPupilList(pageIndex: pageIndex)
             }
         }
     }
 
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        finish(false)
+    override func knowsPageRange(_ range: NSRangePointer) -> Bool {
+        range.pointee = NSRange(location: 1, length: pageCount)
+        return true
     }
 
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        finish(false)
+    override func rectForPage(_ page: Int) -> NSRect {
+        let index = max(0, min(page - 1, pageCount - 1))
+        return NSRect(
+            x: 0,
+            y: CGFloat(index) * paperSize.height,
+            width: paperSize.width,
+            height: paperSize.height
+        )
+    }
+
+    func pdfData() -> Data? {
+        let output = PDFDocument()
+
+        for pageIndex in 0..<pageCount {
+            let rect = rectForPage(pageIndex + 1)
+            let onePageData = dataWithPDF(inside: rect)
+            guard let onePageDocument = PDFDocument(data: onePageData),
+                  let page = onePageDocument.page(at: 0) else {
+                return nil
+            }
+            output.insert(page, at: output.pageCount)
+        }
+
+        return output.dataRepresentation()
     }
 }
 
@@ -304,7 +774,6 @@ final class AppStore: ObservableObject {
     @Published var selectedAP = "AP1"
     @Published var statusMessage = "Ready"
     private let appName = "BULIG RMS Teacher"
-    private var printCoordinator: HTMLPrintCoordinator?
 
     init() { load(); migrateLearnerNameFields(); migratePreAssessmentHistory() }
 
@@ -928,7 +1397,8 @@ final class AppStore: ObservableObject {
     func profileCount(_ profile: String, checkpoint: KeyPath<PreAssessment, String>, sex: String) -> Int {
         let target = storedProfileValue(profile)
         return data.learners.filter { learner in
-            learner.sex == sex && preAssessment(for: learner)[keyPath: checkpoint] == target
+            let value = preAssessment(for: learner)[keyPath: checkpoint]
+            return learner.sex == sex && (value == target || value == profile)
         }.count
     }
 
@@ -1141,52 +1611,120 @@ final class AppStore: ObservableObject {
         """
     }
 
-    private func reportDocument(stage: String, type: PrintoutType) -> (html: String, orientation: NSPrintInfo.PaperOrientation) {
-        switch type {
-        case .classroomMonitoring:
-            return (classroomMonitoringHTML(stage: stage), .landscape)
-        case .pupilList:
-            return (pupilListHTML(stage: stage), .portrait)
+    private func nativeReportSnapshot(stage: String) -> NativeReportSnapshot {
+        let crm = reportRows(stage: stage).compactMap { row -> NativeCRMLevelRow? in
+            guard let info = readingLevels.first(where: { $0.code == row.0 }) else { return nil }
+            return NativeCRMLevelRow(
+                level: row.0,
+                area: info.area,
+                male: row.1,
+                female: row.2,
+                total: row.3
+            )
         }
+
+        let profiles = profileLabelsForCurrentKeyStage().map { label in
+            NativeProfileRow(
+                label: label,
+                bosyMale: profileCount(label, checkpoint: \.bosy, sex: "Male"),
+                bosyFemale: profileCount(label, checkpoint: \.bosy, sex: "Female"),
+                mosyMale: profileCount(label, checkpoint: \.mosy, sex: "Male"),
+                mosyFemale: profileCount(label, checkpoint: \.mosy, sex: "Female"),
+                eosyMale: profileCount(label, checkpoint: \.eosy, sex: "Male"),
+                eosyFemale: profileCount(label, checkpoint: \.eosy, sex: "Female")
+            )
+        }
+
+        let pupils = learnersForStage(stage).map { learner, level -> NativePupilRow in
+            let info = readingLevels.first(where: { $0.code == level })
+            return NativePupilRow(
+                name: learner.displayName,
+                sex: learner.sex,
+                area: info?.area ?? "",
+                level: level
+            )
+        }
+
+        let activePre = data.learners.map { preAssessment(for: $0) }
+
+        return NativeReportSnapshot(
+            settings: data.settings,
+            stage: stage,
+            term: termFor(stage),
+            keyStage: keyStage(),
+            crmRows: crm,
+            profileRows: profiles,
+            bosyTotal: activePre.filter { !$0.bosy.isEmpty }.count,
+            mosyTotal: activePre.filter { !$0.mosy.isEmpty }.count,
+            eosyTotal: activePre.filter { !$0.eosy.isEmpty }.count,
+            pupils: pupils,
+            maleCount: data.learners.filter { $0.sex == "Male" }.count,
+            femaleCount: data.learners.filter { $0.sex == "Female" }.count,
+            generatedAt: DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+        )
     }
 
-    private func beginReportOutput(stage: String, type: PrintoutType, output: ReportOutput) {
-        let document = reportDocument(stage: stage, type: type)
-        statusMessage = "Preparing report…"
-        printCoordinator = HTMLPrintCoordinator(
-            html: document.html,
-            orientation: document.orientation,
-            output: output
-        ) { [weak self] success in
-            guard let self else { return }
-            switch output {
-            case .print:
-                self.statusMessage = success ? "Report sent to print" : "Printing cancelled or failed"
-            case .preview:
-                self.statusMessage = success ? "Report opened in Preview" : "Preview failed"
-            case .savePDF:
-                self.statusMessage = success ? "PDF saved" : "PDF save failed"
-            }
-            self.printCoordinator = nil
-        }
+    private func nativeReportView(stage: String, type: PrintoutType) -> NativeReportView {
+        NativeReportView(type: type, snapshot: nativeReportSnapshot(stage: stage))
     }
 
     func previewReport(stage: String, type: PrintoutType) {
-        beginReportOutput(stage: stage, type: type, output: .preview)
+        let view = nativeReportView(stage: stage, type: type)
+        guard let data = view.pdfData() else {
+            statusMessage = "Preview failed"
+            return
+        }
+
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BULIG_Report_Preview_\(UUID().uuidString).pdf")
+        do {
+            try data.write(to: temp, options: .atomic)
+            NSWorkspace.shared.open(temp)
+            statusMessage = "Preview opened"
+        } catch {
+            statusMessage = "Preview failed"
+        }
     }
 
     func printReport(stage: String, type: PrintoutType) {
-        beginReportOutput(stage: stage, type: type, output: .print)
+        let view = nativeReportView(stage: stage, type: type)
+        let info = NSPrintInfo.shared.copy() as! NSPrintInfo
+        info.paperSize = view.paperSize
+        info.leftMargin = 0
+        info.rightMargin = 0
+        info.topMargin = 0
+        info.bottomMargin = 0
+        info.horizontalPagination = .fit
+        info.verticalPagination = .automatic
+        info.isHorizontallyCentered = true
+        info.isVerticallyCentered = false
+
+        let op = NSPrintOperation(view: view, printInfo: info)
+        op.showsPrintPanel = true
+        op.showsProgressPanel = true
+        statusMessage = op.run() ? "Report sent to print" : "Printing cancelled or failed"
     }
 
     func savePDFReport(stage: String, type: PrintoutType) {
+        let view = nativeReportView(stage: stage, type: type)
+        guard let data = view.pdfData() else {
+            statusMessage = "PDF generation failed"
+            return
+        }
+
         let panel = NSSavePanel()
         panel.title = "Save BULIG Report as PDF"
         let reportName = type == .classroomMonitoring ? "Classroom_Reading_Monitoring_Report" : "List_of_Pupils"
         panel.nameFieldStringValue = "BULIG_\(stage)_\(reportName).pdf"
         panel.allowedFileTypes = ["pdf"]
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        beginReportOutput(stage: stage, type: type, output: .savePDF(url))
+
+        do {
+            try data.write(to: url, options: .atomic)
+            statusMessage = "PDF saved"
+        } catch {
+            statusMessage = "PDF save failed"
+        }
     }
 
     func exportCSV(stage: String) {
@@ -2244,7 +2782,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.14 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.15 • Offline macOS App")
             }
         }
     }
