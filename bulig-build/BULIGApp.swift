@@ -239,10 +239,10 @@ final class HTMLPrintCoordinator: NSObject, WKNavigationDelegate {
         let info = NSPrintInfo.shared.copy() as! NSPrintInfo
         info.paperSize = NSSize(width: 595.2, height: 841.8) // A4
         info.orientation = orientation
-        info.leftMargin = 18
-        info.rightMargin = 18
-        info.topMargin = 18
-        info.bottomMargin = 18
+        info.leftMargin = 72
+        info.rightMargin = 72
+        info.topMargin = 36
+        info.bottomMargin = 36
         info.horizontalPagination = .fit
         info.verticalPagination = .automatic
         info.isHorizontallyCentered = true
@@ -1008,9 +1008,9 @@ final class AppStore: ObservableObject {
     private func sharedReportCSS(landscape: Bool) -> String {
         """
         <style>
-        @page { size: A4 \(landscape ? "landscape" : "portrait"); margin: 0.5in; }
+        @page { size: A4 \(landscape ? "landscape" : "portrait"); margin: 0.5in 1in; }
         * { box-sizing: border-box; }
-        body { font-family: Arial, Helvetica, sans-serif; color:#000; margin:0; font-size:10px; }
+        body { font-family: Arial, Helvetica, sans-serif; color:#000; margin:0; font-size:12pt; }
         .brandrow { display:grid; grid-template-columns: 140px 1fr 260px; align-items:center; min-height:84px; }
         .deped-mark { text-align:center; font-size:17px; font-weight:800; color:#124b91; line-height:1.1; }
         .deped-mark span { font-size:10px; color:#333; }
@@ -1020,28 +1020,28 @@ final class AppStore: ObservableObject {
         .tagline { text-align:center; font-weight:700; font-family:Georgia,serif; font-size:12px; }
         .title { text-align:center; font-weight:800; font-family:Georgia,serif; font-size:18px; margin:5px 0 15px; }
         table { border-collapse:collapse; width:100%; }
-        .meta td { border:1.4px solid #000; height:22px; padding:3px 6px; font-size:11px; }
+        .meta td { border:1.4px solid #000; min-height:22px; padding:4px 6px; font-size:12pt; }
         .meta .label { text-align:center; font-weight:600; width:18%; }
         .levels { margin-top:18px; table-layout:fixed; }
         .levels th,.levels td,.profile th,.profile td,.pupils th,.pupils td { border:1.35px solid #000; padding:4px 4px; text-align:center; }
         .levels th,.profile th,.pupils th { background:#d9d9d9; font-weight:700; }
-        .levels .area { font-size:7.5px; line-height:1.12; }
+        .levels .area { font-size:9pt; line-height:1.12; }
         .left { text-align:left !important; }
         .profile-title { margin-top:18px; background:#d9d9d9; border:1.35px solid #000; border-bottom:0; text-align:center; font-weight:800; font-size:13px; padding:4px; }
         .profile { table-layout:fixed; }
-        .signature-row { display:grid; grid-template-columns:1fr 1fr 150px; gap:45px; margin-top:34px; align-items:end; }
-        .sig { text-align:center; font-size:10px; }
+        .signature-row { display:grid; grid-template-columns:1fr 1fr 150px; gap:45px; margin-top:34px; align-items:end; font-size:12pt; }
+        .sig { text-align:center; font-size:12pt; }
         .sig .name { border-bottom:1px solid #000; min-height:24px; padding-top:11px; font-weight:700; }
-        .datebox { text-align:center; font-size:9px; }
+        .datebox { text-align:center; font-size:12pt; }
         .datebox .date { border-bottom:1px solid #000; padding-bottom:3px; margin-bottom:3px; }
         .group { background:#e6e6e6; font-weight:800; text-align:center !important; }
-        .pupils { margin-top:18px; table-layout:fixed; font-size:9px; }
+        .pupils { margin-top:18px; table-layout:fixed; font-size:12pt; }
         .pupils th:nth-child(1) { width:7%; }
         .pupils th:nth-child(2) { width:38%; }
         .pupils th:nth-child(3) { width:18%; }
         .pupils th:nth-child(4) { width:18%; }
         .pupils th:nth-child(5) { width:19%; }
-        .summary { margin-top:14px; width:55%; font-size:10px; }
+        .summary { margin-top:14px; width:55%; font-size:12pt; }
         .summary td { border:1.2px solid #000; padding:4px 6px; }
         .warn { margin:18px 0; border:1px solid #b00; padding:10px; font-weight:700; color:#800; }
         </style>
@@ -2245,7 +2245,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.13 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.14 • Offline macOS App")
             }
         }
     }
