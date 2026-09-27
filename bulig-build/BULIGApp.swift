@@ -431,16 +431,16 @@ final class NativeReportView: NSView {
         let w = paperSize.width - leftMargin - rightMargin
         var y = pageOriginY + topMargin
 
-        let brandH: CGFloat = 60
+        let brandH: CGFloat = 48
         drawImage(
             resource: "DepEdBukidnonSeal",
             ext: "jpg",
-            in: NSRect(x: x, y: y, width: 70, height: brandH)
+            in: NSRect(x: x, y: y, width: 62, height: brandH)
         )
 
-        let agencyX = x + 78
+        let agencyX = x + 68
         let logoW: CGFloat = min(160, w * 0.32)
-        let agencyW = max(140, w - 78 - logoW - 8)
+        let agencyW = max(140, w - 68 - logoW - 8)
         let agency = [
             "Department of Education",
             snapshot.settings.region,
@@ -463,32 +463,32 @@ final class NativeReportView: NSView {
 
         drawText(
             "BUKIDNON'S UNIFIED LITERACY AND INTERVENTION GATEWAY",
-            in: NSRect(x: x, y: y, width: w, height: 16),
-            size: 12,
+            in: NSRect(x: x, y: y, width: w, height: 14),
+            size: 11.5,
             bold: true,
             alignment: .center
         )
-        y += 16
+        y += 14
 
         drawText(
             "Building Up Literacy, Inspiring Growth",
-            in: NSRect(x: x, y: y, width: w, height: 15),
-            size: 12,
+            in: NSRect(x: x, y: y, width: w, height: 14),
+            size: 11.5,
             bold: true,
             alignment: .center
         )
-        y += 15
+        y += 14
 
         drawText(
             title,
-            in: NSRect(x: x, y: y, width: w, height: 23),
-            size: 16,
+            in: NSRect(x: x, y: y, width: w, height: 20),
+            size: 15,
             bold: true,
             alignment: .center
         )
-        y += 25
+        y += 22
 
-        let rowH: CGFloat = 26
+        let rowH: CGFloat = 22
         let widths = [w * 0.18, w * 0.32, w * 0.20, w * 0.30]
         let rows: [[String]] = [
             ["Adviser", snapshot.settings.adviser, "ASSESSMENT\nPERIOD", snapshot.stage],
@@ -524,7 +524,7 @@ final class NativeReportView: NSView {
         includeDate: Bool
     ) {
         let sigW = (width - 30) / 2
-        let blockHeight: CGFloat = 68
+        let blockHeight: CGFloat = 72
         let maxY = pageY + paperSize.height - bottomMargin - blockHeight
         let y = min(requestedY, maxY)
 
@@ -532,7 +532,7 @@ final class NativeReportView: NSView {
         drawText("Noted by:", in: NSRect(x: x + sigW + 30, y: y, width: sigW, height: 14), size: 10)
 
         // Small blank area specifically reserved for the actual signature.
-        let nameY = y + 31
+        let nameY = y + 34
         drawText(
             snapshot.settings.adviser,
             in: NSRect(x: x, y: nameY, width: sigW, height: 16),
@@ -591,7 +591,7 @@ final class NativeReportView: NSView {
         let labelW: CGFloat = 50
         let totalW: CGFloat = 46
         let levelW = (w - labelW - totalW) / CGFloat(max(snapshot.crmRows.count, 1))
-        let headerH: CGFloat = 32
+        let headerH: CGFloat = 28
 
         cell("", rect: NSRect(x: x, y: y, width: labelW, height: headerH),
              fillColor: NSColor(calibratedWhite: 0.85, alpha: 1))
@@ -615,7 +615,7 @@ final class NativeReportView: NSView {
              fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 10)
         y += headerH
 
-        let dataH: CGFloat = 20
+        let dataH: CGFloat = 18
         let totalMale = snapshot.crmRows.reduce(0) { $0 + $1.male }
         let totalFemale = snapshot.crmRows.reduce(0) { $0 + $1.female }
         let rowDefs: [(String, [Int], Int, Bool)] = [
@@ -646,41 +646,41 @@ final class NativeReportView: NSView {
 
             cell(
                 "KEY STAGE \(snapshot.keyStage)",
-                rect: NSRect(x: x, y: y, width: w, height: 18),
+                rect: NSRect(x: x, y: y, width: w, height: 16),
                 fillColor: NSColor(calibratedWhite: 0.85, alpha: 1),
                 bold: true,
-                size: 11
+                size: 10.5
             )
-            y += 18
+            y += 16
 
             cx = x
             for heading in ["BOSY", "MOSY", "EOSY"] {
                 cell(
                     heading,
-                    rect: NSRect(x: cx, y: y, width: groupW, height: 18),
+                    rect: NSRect(x: cx, y: y, width: groupW, height: 16),
                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1),
                     bold: true,
-                    size: 10
+                    size: 9.5
                 )
                 cx += groupW
             }
-            y += 18
+            y += 16
 
             cx = x
             for _ in 0..<3 {
-                cell("Reading Profile", rect: NSRect(x: cx, y: y, width: profileW, height: 24),
-                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 9)
+                cell("Reading Profile", rect: NSRect(x: cx, y: y, width: profileW, height: 20),
+                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 8.5)
                 cx += profileW
-                cell("Male", rect: NSRect(x: cx, y: y, width: countW, height: 24),
-                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 9)
+                cell("Male", rect: NSRect(x: cx, y: y, width: countW, height: 20),
+                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 8.5)
                 cx += countW
-                cell("Female", rect: NSRect(x: cx, y: y, width: countW, height: 24),
-                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 9)
+                cell("Female", rect: NSRect(x: cx, y: y, width: countW, height: 20),
+                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 8.5)
                 cx += countW
             }
-            y += 24
+            y += 20
 
-            let profileH: CGFloat = 19
+            let profileH: CGFloat = 15
             for p in snapshot.profileRows {
                 let values: [(String, Int, Int)] = [
                     (p.label, p.bosyMale, p.bosyFemale),
@@ -721,7 +721,7 @@ final class NativeReportView: NSView {
             y += 32
         }
 
-        drawSignatureBlock(pageY: pageY, y: y + 5, x: x, width: w, includeDate: true)
+        drawSignatureBlock(pageY: pageY, y: y + 10, x: x, width: w, includeDate: true)
     }
 
     private enum ListEntry {
@@ -2960,7 +2960,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.16 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.17 • Offline macOS App")
             }
         }
     }
