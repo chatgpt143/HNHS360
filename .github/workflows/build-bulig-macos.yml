@@ -21,6 +21,8 @@ jobs:
           set -euxo pipefail
           mkdir -p build
           base64 -D -i bulig-build/BuligLogo.jpg.b64 -o build/BuligLogo.jpg
+          base64 -D -i bulig-build/DepEdBukidnonSeal.jpg.b64 -o build/DepEdBukidnonSeal.jpg
+          base64 -D -i bulig-build/ReportBuligLogo.jpg.b64 -o build/ReportBuligLogo.jpg
 
           rm -rf build/BuligIcon.iconset
           mkdir -p build/BuligIcon.iconset
@@ -74,6 +76,8 @@ jobs:
           chmod +x "$APP/Contents/MacOS/BULIGRMSTeacher"
           cp build/BuligIcon.icns "$APP/Contents/Resources/BuligIcon.icns"
           cp build/BuligLogo.jpg "$APP/Contents/Resources/BuligLogo.jpg"
+          cp build/DepEdBukidnonSeal.jpg "$APP/Contents/Resources/DepEdBukidnonSeal.jpg"
+          cp build/ReportBuligLogo.jpg "$APP/Contents/Resources/ReportBuligLogo.jpg"
           cp build/sheetjs/package/dist/xlsx.full.min.js "$APP/Contents/Resources/xlsx.full.min.js"
           if [ -f build/sheetjs/package/LICENSE ]; then cp build/sheetjs/package/LICENSE "$APP/Contents/Resources/SheetJS-LICENSE.txt"; fi
 
@@ -90,8 +94,8 @@ jobs:
             <key>CFBundleName</key><string>BULIG RMS Teacher</string>
             <key>CFBundleDisplayName</key><string>BULIG RMS Teacher</string>
             <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleShortVersionString</key><string>0.15</string>
-            <key>CFBundleVersion</key><string>15</string>
+            <key>CFBundleShortVersionString</key><string>0.16</string>
+            <key>CFBundleVersion</key><string>16</string>
             <key>LSMinimumSystemVersion</key><string>13.0</string>
             <key>NSHighResolutionCapable</key><true/>
             <key>NSPrincipalClass</key><string>NSApplication</string>
@@ -115,19 +119,19 @@ jobs:
             -srcfolder dmgroot \
             -ov \
             -format UDZO \
-            "BULIG_RMS_Teacher_Mac_v0.15.dmg"
+            "BULIG_RMS_Teacher_Mac_v0.16.dmg"
           ditto -c -k --sequesterRsrc --keepParent \
             "dist/BULIG RMS Teacher.app" \
-            "BULIG_RMS_Teacher_Mac_v0.15_App.zip"
-          ls -lh BULIG_RMS_Teacher_Mac_v0.15.dmg BULIG_RMS_Teacher_Mac_v0.15_App.zip
+            "BULIG_RMS_Teacher_Mac_v0.16_App.zip"
+          ls -lh BULIG_RMS_Teacher_Mac_v0.16.dmg BULIG_RMS_Teacher_Mac_v0.16_App.zip
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BULIG-RMS-Teacher-Mac-v0.15
+          name: BULIG-RMS-Teacher-Mac-v0.16
           path: |
-            BULIG_RMS_Teacher_Mac_v0.15.dmg
-            BULIG_RMS_Teacher_Mac_v0.15_App.zip
+            BULIG_RMS_Teacher_Mac_v0.16.dmg
+            BULIG_RMS_Teacher_Mac_v0.16_App.zip
           if-no-files-found: error
           retention-days: 7
 
