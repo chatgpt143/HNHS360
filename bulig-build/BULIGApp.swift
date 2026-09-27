@@ -28,6 +28,25 @@ struct PreAssessment: Codable, Equatable {
 
 struct AssessmentEntry: Codable, Equatable {
     var result = ""
+    var overrideLevel = ""
+    var note = ""
+
+    enum CodingKeys: String, CodingKey {
+        case result, overrideLevel, note
+    }
+
+    init(result: String = "", overrideLevel: String = "", note: String = "") {
+        self.result = result
+        self.overrideLevel = overrideLevel
+        self.note = note
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        result = try c.decodeIfPresent(String.self, forKey: .result) ?? ""
+        overrideLevel = try c.decodeIfPresent(String.self, forKey: .overrideLevel) ?? ""
+        note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
+    }
 }
 
 struct Learner: Identifiable, Codable, Equatable {
@@ -135,7 +154,7 @@ let readingLevels: [ReadingLevel] = [
 
 let assessmentPeriods = (1...15).map { "AP\($0)" }
 let terms = ["1ST", "2ND", "3RD", "4TH", "SUMMER"]
-let results = ["", "READY", "NOT READY", "NLP"]
+let results = ["", "READY", "NOT READY", "REVERTED", "NLS", "NLP", "TRANSFER OUT"]
 let preAssessmentPeriods = ["BOSY", "MOSY", "EOSY"]
 
 struct SF1ParsedSheet: Decodable {
@@ -360,30 +379,76 @@ final class AppStore: ObservableObject {
         return readingLevels[min(idx + 1, readingLevels.count - 1)].code
     }
 
+    func previousLevel(_ level: String) -> String {
+        guard let idx = readingLevels.firstIndex(where: { $0.code == level }) else { return level }
+        return readingLevels[max(idx - 1, 0)].code
+    }
+
+    func isInactiveStatus(_ result: String) -> Bool {
+        ["NLS", "NLP", "TRANSFER OUT"].contains(result)
+    }
+
+    func defaultLevelAfter(result: String, from level: String) -> String {
+        guard !level.isEmpty else { return "" }
+        switch result {
+        case "READY":
+            return nextLevel(level)
+        case "REVERTED":
+            return previousLevel(level)
+        default:
+            return level
+        }
+    }
+
+    func appliedLevel(for entry: AssessmentEntry?, from level: String) -> String {
+        guard let entry else { return level }
+        if !entry.overrideLevel.isEmpty {
+            return entry.overrideLevel
+        }
+        return defaultLevelAfter(result: entry.result, from: level)
+    }
+
+    func inactiveStatusBeforeAP(_ learner: Learner, ap: String) -> (period: String, status: String)? {
+        guard let target = assessmentPeriods.firstIndex(of: ap), target > 0 else { return nil }
+        for i in 0..<target {
+            let key = assessmentPeriods[i]
+            if let entry = learner.assessments[key], isInactiveStatus(entry.result) {
+                return (key, entry.result)
+            }
+        }
+        return nil
+    }
+
     func levelBeforeAP(_ learner: Learner, ap: String) -> String {
         var level = preAssessment(for: learner).level
         guard !level.isEmpty else { return "" }
-        let target = assessmentPeriods.firstIndex(of: ap) ?? 0
-        if target == 0 { return level }
+        guard let target = assessmentPeriods.firstIndex(of: ap), target > 0 else { return level }
+
         for i in 0..<target {
             let key = assessmentPeriods[i]
-            if learner.assessments[key]?.result == "READY" { level = nextLevel(level) }
+            guard let entry = learner.assessments[key] else { continue }
+            level = appliedLevel(for: entry, from: level)
+            if isInactiveStatus(entry.result) { break }
         }
         return level
     }
 
     func levelAfterAP(_ learner: Learner, ap: String) -> String {
         let before = levelBeforeAP(learner, ap: ap)
-        if learner.assessments[ap]?.result == "READY" { return nextLevel(before) }
-        return before
+        guard inactiveStatusBeforeAP(learner, ap: ap) == nil else { return before }
+        return appliedLevel(for: learner.assessments[ap], from: before)
     }
 
     func currentLevel(_ learner: Learner, through ap: String?) -> String {
         guard let ap else { return preAssessment(for: learner).level }
         var level = preAssessment(for: learner).level
         guard !level.isEmpty else { return "" }
+
         for key in assessmentPeriods {
-            if learner.assessments[key]?.result == "READY" { level = nextLevel(level) }
+            if let entry = learner.assessments[key] {
+                level = appliedLevel(for: entry, from: level)
+                if isInactiveStatus(entry.result) { break }
+            }
             if key == ap { break }
         }
         return level
@@ -1645,27 +1710,80 @@ struct PreAssessmentView: View {
 struct MonitoringView: View {
     @ObservedObject var store: AppStore
 
+    @State private var editingLearnerID: UUID? = nil
+    @State private var manualLevel = ""
+    @State private var manualNote = ""
+    @State private var showOverrideConfirmation = false
+
     func resultBinding(for learnerID: UUID) -> Binding<String> {
         Binding(
             get: {
-                store.data.learners.first(where: {$0.id == learnerID})?.assessments[store.selectedAP]?.result ?? ""
+                store.data.learners.first(where: { $0.id == learnerID })?
+                    .assessments[store.selectedAP]?.result ?? ""
             },
             set: { newValue in
-                guard let index = store.data.learners.firstIndex(where: {$0.id == learnerID}) else { return }
+                guard let index = store.data.learners.firstIndex(where: { $0.id == learnerID }) else { return }
+                // Selecting/changing a status restores the normal automatic rule.
+                // A special level is applied only when the teacher deliberately uses Edit Level.
                 store.data.learners[index].assessments[store.selectedAP] = AssessmentEntry(result: newValue)
                 store.save()
             }
         )
     }
 
+    private var editingLearner: Learner? {
+        guard let id = editingLearnerID else { return nil }
+        return store.data.learners.first(where: { $0.id == id })
+    }
+
+    private func beginLevelEdit(_ learner: Learner) {
+        editingLearnerID = learner.id
+        manualLevel = store.levelAfterAP(learner, ap: store.selectedAP)
+        manualNote = learner.assessments[store.selectedAP]?.note ?? ""
+    }
+
+    private func saveManualLevel() {
+        guard let learner = editingLearner,
+              let index = store.data.learners.firstIndex(where: { $0.id == learner.id }),
+              !manualLevel.isEmpty else { return }
+
+        var entry = store.data.learners[index].assessments[store.selectedAP] ?? AssessmentEntry()
+        entry.overrideLevel = manualLevel
+        entry.note = manualNote.trimmingCharacters(in: .whitespacesAndNewlines)
+        store.data.learners[index].assessments[store.selectedAP] = entry
+        store.save()
+        editingLearnerID = nil
+        showOverrideConfirmation = false
+    }
+
+    private func clearManualOverride(_ learner: Learner) {
+        guard let index = store.data.learners.firstIndex(where: { $0.id == learner.id }),
+              var entry = store.data.learners[index].assessments[store.selectedAP] else { return }
+        entry.overrideLevel = ""
+        entry.note = ""
+        store.data.learners[index].assessments[store.selectedAP] = entry
+        store.save()
+    }
+
+    private func statusLabel(_ status: String) -> String {
+        switch status {
+        case "NLS": return "NLS – No Longer in School"
+        case "NLP": return "NLP – No Longer Participating"
+        case "TRANSFER OUT": return "Transfer Out"
+        default: return status
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             PageHeader(title: "Monitoring", subtitle: "AP1–AP15 reading progression")
+
             HStack(spacing: 14) {
                 Picker("Assessment Period", selection: $store.selectedAP) {
                     ForEach(assessmentPeriods, id: \.self) { Text($0).tag($0) }
                 }
                 .frame(width: 210)
+
                 Picker("Term", selection: Binding(
                     get: { store.data.assessmentTerms[store.selectedAP] ?? "1ST" },
                     set: { store.data.assessmentTerms[store.selectedAP] = $0; store.save() }
@@ -1673,36 +1791,123 @@ struct MonitoringView: View {
                     ForEach(terms, id: \.self) { Text($0).tag($0) }
                 }
                 .frame(width: 150)
+
                 Spacer()
-                Text("READY advances one level • NOT READY/NLP retains level")
+
+                Text("READY +1 • NOT READY stays • REVERTED −1 • Edit Level for special cases")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            HStack(spacing: 16) {
+                Label("NLS: No Longer in School", systemImage: "person.crop.circle.badge.xmark")
+                Label("NLP: No Longer Participating", systemImage: "person.crop.circle.badge.minus")
+                Label("Transfer Out", systemImage: "arrow.right.square")
+                Spacer()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
             List {
                 ForEach(store.data.learners) { learner in
-                    HStack(spacing: 12) {
-                        Text(learner.displayName.isEmpty ? "Unnamed learner" : learner.displayName)
-                            .frame(minWidth: 240, alignment: .leading)
-                            .bold()
-                        VStack(alignment: .leading) {
-                            Text("Previous").font(.caption2).foregroundStyle(.secondary)
-                            Text(store.levelBeforeAP(learner, ap: store.selectedAP).isEmpty ? "—" : store.levelBeforeAP(learner, ap: store.selectedAP))
-                                .monospaced()
-                        }
-                        .frame(width: 115, alignment: .leading)
-                        Picker("Result", selection: resultBinding(for: learner.id)) {
-                            ForEach(results, id: \.self) { Text($0.isEmpty ? "Select Result" : $0).tag($0) }
-                        }
-                        .frame(width: 170)
-                        Image(systemName: "arrow.right").foregroundStyle(.secondary)
-                        VStack(alignment: .leading) {
-                            Text("New Level").font(.caption2).foregroundStyle(.secondary)
-                            Text(store.levelAfterAP(learner, ap: store.selectedAP).isEmpty ? "—" : store.levelAfterAP(learner, ap: store.selectedAP))
-                                .monospaced()
+                    let inactive = store.inactiveStatusBeforeAP(learner, ap: store.selectedAP)
+                    let entry = learner.assessments[store.selectedAP]
+                    let previous = store.levelBeforeAP(learner, ap: store.selectedAP)
+                    let newLevel = store.levelAfterAP(learner, ap: store.selectedAP)
+                    let hasOverride = !(entry?.overrideLevel ?? "").isEmpty
+
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack(spacing: 12) {
+                            Text(learner.displayName.isEmpty ? "Unnamed learner" : learner.displayName)
+                                .frame(minWidth: 225, alignment: .leading)
                                 .bold()
+
+                            VStack(alignment: .leading) {
+                                Text("Previous").font(.caption2).foregroundStyle(.secondary)
+                                Text(previous.isEmpty ? "—" : previous)
+                                    .monospaced()
+                            }
+                            .frame(width: 105, alignment: .leading)
+
+                            if let inactive {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(statusLabel(inactive.status))
+                                        .bold()
+                                    Text("Inactive since \(inactive.period)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(minWidth: 235, alignment: .leading)
+                            } else {
+                                Picker("Status", selection: resultBinding(for: learner.id)) {
+                                    Text("Select Status").tag("")
+                                    Text("READY").tag("READY")
+                                    Text("NOT READY").tag("NOT READY")
+                                    Text("REVERTED").tag("REVERTED")
+                                    Divider()
+                                    Text("NLS – No Longer in School").tag("NLS")
+                                    Text("NLP – No Longer Participating").tag("NLP")
+                                    Text("TRANSFER OUT").tag("TRANSFER OUT")
+                                }
+                                .frame(width: 245)
+
+                                Image(systemName: "arrow.right")
+                                    .foregroundStyle(.secondary)
+
+                                VStack(alignment: .leading) {
+                                    HStack(spacing: 5) {
+                                        Text("New Level").font(.caption2).foregroundStyle(.secondary)
+                                        if hasOverride {
+                                            Text("MANUAL")
+                                                .font(.system(size: 8, weight: .bold))
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 2)
+                                                .background(Color.orange.opacity(0.15))
+                                                .clipShape(Capsule())
+                                        }
+                                    }
+                                    Text(newLevel.isEmpty ? "—" : newLevel)
+                                        .monospaced()
+                                        .bold()
+                                }
+                                .frame(width: 118, alignment: .leading)
+
+                                Button {
+                                    beginLevelEdit(learner)
+                                } label: {
+                                    Label("Edit Level", systemImage: "pencil")
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(
+                                    entry?.result.isEmpty != false ||
+                                    store.isInactiveStatus(entry?.result ?? "")
+                                )
+
+                                if hasOverride {
+                                    Button {
+                                        clearManualOverride(learner)
+                                    } label: {
+                                        Image(systemName: "arrow.uturn.backward")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help("Restore automatic level")
+                                }
+                            }
+
+                            Spacer()
                         }
-                        .frame(width: 115, alignment: .leading)
-                        Spacer()
+
+                        if let entry, store.isInactiveStatus(entry.result), inactive == nil {
+                            Text("\(statusLabel(entry.result)) starts in \(store.selectedAP). The learner's last reading level is retained, and succeeding APs will be marked inactive.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.leading, 342)
+                        } else if hasOverride, let note = entry?.note, !note.isEmpty {
+                            Text("Manual adjustment note: \(note)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.leading, 342)
+                        }
                     }
                     .padding(.vertical, 5)
                 }
@@ -1710,6 +1915,79 @@ struct MonitoringView: View {
             .listStyle(.inset(alternatesRowBackgrounds: true))
         }
         .padding(28)
+        .sheet(isPresented: Binding(
+            get: { editingLearnerID != nil },
+            set: { if !$0 { editingLearnerID = nil } }
+        )) {
+            if let learner = editingLearner {
+                let previous = store.levelBeforeAP(learner, ap: store.selectedAP)
+                let status = learner.assessments[store.selectedAP]?.result ?? ""
+                let automatic = store.defaultLevelAfter(result: status, from: previous)
+
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("Edit Reading Level")
+                        .font(.title2.bold())
+
+                    Text(learner.displayName)
+                        .font(.headline)
+
+                    Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 9) {
+                        GridRow {
+                            Text("Assessment Period").foregroundStyle(.secondary)
+                            Text(store.selectedAP).bold()
+                        }
+                        GridRow {
+                            Text("Previous Level").foregroundStyle(.secondary)
+                            Text(previous.isEmpty ? "—" : previous).bold()
+                        }
+                        GridRow {
+                            Text("Status").foregroundStyle(.secondary)
+                            Text(statusLabel(status)).bold()
+                        }
+                        GridRow {
+                            Text("Automatic Level").foregroundStyle(.secondary)
+                            Text(automatic.isEmpty ? "—" : automatic).bold()
+                        }
+                    }
+
+                    Divider()
+
+                    Picker("Manual Level", selection: $manualLevel) {
+                        ForEach(readingLevels) { level in
+                            Text(level.code).tag(level.code)
+                        }
+                    }
+
+                    TextField("Reason / Note (optional)", text: $manualNote)
+
+                    Text("Use this only for special cases, such as a learner jumping several levels forward or reverting more than one level.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack {
+                        Spacer()
+                        Button("Cancel") {
+                            editingLearnerID = nil
+                        }
+                        Button("Apply Manual Level") {
+                            showOverrideConfirmation = true
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(manualLevel.isEmpty)
+                    }
+                }
+                .padding(24)
+                .frame(width: 520, height: 410)
+                .alert("Confirm Manual Level Change", isPresented: $showOverrideConfirmation) {
+                    Button("Cancel", role: .cancel) { }
+                    Button("Confirm") {
+                        saveManualLevel()
+                    }
+                } message: {
+                    Text("\(learner.displayName)\n\(previous) → \(manualLevel)\n\nThis overrides the normal automatic progression for \(store.selectedAP).")
+                }
+            }
+        }
     }
 }
 
@@ -1853,7 +2131,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.11 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.12 • Offline macOS App")
             }
         }
     }
