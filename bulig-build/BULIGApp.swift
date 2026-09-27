@@ -279,7 +279,7 @@ final class HTMLPrintCoordinator: NSObject, WKNavigationDelegate {
 
             case .savePDF(let url):
                 info.jobDisposition = .save
-                info.dictionary()[NSPrintInfo.Attribute.jobSavingURL] = url as NSURL
+                info.dictionary()[NSPrintInfo.AttributeKey.jobSavingURL] = url as NSURL
                 let op = webView.printOperation(with: info)
                 op.showsPrintPanel = false
                 op.showsProgressPanel = true
