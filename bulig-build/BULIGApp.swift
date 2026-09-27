@@ -247,7 +247,6 @@ final class HTMLPrintCoordinator: NSObject, WKNavigationDelegate {
         info.verticalPagination = .automatic
         info.isHorizontallyCentered = true
         info.isVerticallyCentered = false
-        info.dictionary()[.headerAndFooter] = false
         return info
     }
 
@@ -280,7 +279,7 @@ final class HTMLPrintCoordinator: NSObject, WKNavigationDelegate {
 
             case .savePDF(let url):
                 info.jobDisposition = .save
-                info.dictionary()[.jobSavingURL] = url as NSURL
+                info.dictionary()[NSPrintInfo.Attribute.jobSavingURL] = url as NSURL
                 let op = webView.printOperation(with: info)
                 op.showsPrintPanel = false
                 op.showsProgressPanel = true
