@@ -189,6 +189,21 @@ enum PrintoutType: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+func reportLevelColor(_ level: String) -> NSColor {
+    switch level {
+    case "LEVEL 1": return NSColor(calibratedRed: 1.0, green: 0.84, blue: 0.82, alpha: 1)
+    case "LEVEL 2A": return NSColor(calibratedRed: 1.0, green: 0.90, blue: 0.72, alpha: 1)
+    case "LEVEL 2B": return NSColor(calibratedRed: 1.0, green: 0.94, blue: 0.66, alpha: 1)
+    case "LEVEL 3A": return NSColor(calibratedRed: 0.88, green: 0.95, blue: 0.72, alpha: 1)
+    case "LEVEL 3B": return NSColor(calibratedRed: 0.79, green: 0.93, blue: 0.76, alpha: 1)
+    case "LEVEL 4": return NSColor(calibratedRed: 0.75, green: 0.91, blue: 0.94, alpha: 1)
+    case "LEVEL 5": return NSColor(calibratedRed: 0.80, green: 0.86, blue: 0.97, alpha: 1)
+    case "LEVEL 6": return NSColor(calibratedRed: 0.84, green: 0.81, blue: 0.96, alpha: 1)
+    case "LEVEL 7": return NSColor(calibratedRed: 0.92, green: 0.82, blue: 0.95, alpha: 1)
+    default: return .white
+    }
+}
+
 
 struct NativeCRMLevelRow {
     let level: String
@@ -236,13 +251,12 @@ final class NativeReportView: NSView {
     let snapshot: NativeReportSnapshot
     let paperSize: NSSize
     let pageCount: Int
+    private let pupilPageCounts: [Int]
 
-    private let leftMargin: CGFloat = 72
-    private let rightMargin: CGFloat = 72
-    private let topMargin: CGFloat = 36
-    private let bottomMargin: CGFloat = 36
-
-    private let bodyFontSize: CGFloat = 12
+    private let leftMargin: CGFloat = 72      // 1 inch
+    private let rightMargin: CGFloat = 72     // 1 inch
+    private let topMargin: CGFloat = 36       // 0.5 inch
+    private let bottomMargin: CGFloat = 36    // 0.5 inch
 
     init(type: PrintoutType, snapshot: NativeReportSnapshot) {
         self.type = type
@@ -250,11 +264,14 @@ final class NativeReportView: NSView {
 
         if type == .classroomMonitoring {
             self.paperSize = NSSize(width: 841.89, height: 595.28)
+            self.pupilPageCounts = []
             self.pageCount = 1
         } else {
             self.paperSize = NSSize(width: 595.28, height: 841.89)
-            let entryCount = snapshot.pupils.count + 2 // Male/Female group labels
-            self.pageCount = max(1, Int(ceil(Double(entryCount) / 16.0)))
+            let entryCount = snapshot.pupils.count + 2 // Male/Female group rows
+            let counts = NativeReportView.makePupilPageCounts(entryCount: entryCount)
+            self.pupilPageCounts = counts
+            self.pageCount = max(1, counts.count)
         }
 
         super.init(frame: NSRect(
@@ -270,6 +287,53 @@ final class NativeReportView: NSView {
     }
 
     override var isFlipped: Bool { true }
+
+    private static func makePupilPageCounts(entryCount: Int) -> [Int] {
+        guard entryCount > 0 else { return [0] }
+
+        // With header + totals + signatures, 17 entries fit on one A4 portrait page.
+        if entryCount <= 17 { return [entryCount] }
+
+        // First page has the full report header. Continuation pages do not.
+        // Capacities: first 22, middle 30, last 26 (last reserves totals/signatures).
+        let pageCount: Int
+        if entryCount <= 48 {
+            pageCount = 2
+        } else {
+            pageCount = 2 + Int(ceil(Double(entryCount - 48) / 30.0))
+        }
+
+        var capacities: [Int] = []
+        for i in 0..<pageCount {
+            if i == 0 { capacities.append(22) }
+            else if i == pageCount - 1 { capacities.append(26) }
+            else { capacities.append(30) }
+        }
+
+        // Balance rows across pages so no continuation page has a huge empty lower area.
+        var remaining = entryCount
+        var counts: [Int] = []
+        for i in 0..<pageCount {
+            let pagesLeft = pageCount - i
+            let balancedTarget = Int(ceil(Double(remaining) / Double(pagesLeft)))
+            let value = min(capacities[i], balancedTarget)
+            counts.append(value)
+            remaining -= value
+        }
+
+        // If the balancing pass left rows because an earlier page hit its cap,
+        // distribute them to pages that still have capacity.
+        var i = pageCount - 1
+        while remaining > 0 {
+            if counts[i] < capacities[i] {
+                counts[i] += 1
+                remaining -= 1
+            }
+            i -= 1
+            if i < 0 { i = pageCount - 1 }
+        }
+        return counts
+    }
 
     private func font(_ size: CGFloat, bold: Bool = false) -> NSFont {
         let name = bold ? "Arial-BoldMT" : "Arial"
@@ -304,8 +368,10 @@ final class NativeReportView: NSView {
             options: options
         )
         let y = verticalCenter ? rect.minY + max(0, (rect.height - measured.height) / 2) : rect.minY
-        str.draw(with: NSRect(x: rect.minX, y: y, width: rect.width, height: max(rect.height, measured.height)),
-                 options: options)
+        str.draw(
+            with: NSRect(x: rect.minX, y: y, width: rect.width, height: max(rect.height, measured.height)),
+            options: options
+        )
     }
 
     private func stroke(_ rect: NSRect, width: CGFloat = 1.0) {
@@ -331,29 +397,27 @@ final class NativeReportView: NSView {
     ) {
         if let fillColor { fill(rect, color: fillColor) }
         stroke(rect, width: borderWidth)
-        drawText(text, in: rect.insetBy(dx: 3, dy: 2), size: size, bold: bold, alignment: alignment)
-    }
-
-    private func colorForLevel(_ level: String) -> NSColor {
-        switch level {
-        case "LEVEL 1": return NSColor(calibratedRed: 1.0, green: 0.84, blue: 0.82, alpha: 1)
-        case "LEVEL 2A": return NSColor(calibratedRed: 1.0, green: 0.90, blue: 0.72, alpha: 1)
-        case "LEVEL 2B": return NSColor(calibratedRed: 1.0, green: 0.94, blue: 0.66, alpha: 1)
-        case "LEVEL 3A": return NSColor(calibratedRed: 0.88, green: 0.95, blue: 0.72, alpha: 1)
-        case "LEVEL 3B": return NSColor(calibratedRed: 0.79, green: 0.93, blue: 0.76, alpha: 1)
-        case "LEVEL 4": return NSColor(calibratedRed: 0.75, green: 0.91, blue: 0.94, alpha: 1)
-        case "LEVEL 5": return NSColor(calibratedRed: 0.80, green: 0.86, blue: 0.97, alpha: 1)
-        case "LEVEL 6": return NSColor(calibratedRed: 0.84, green: 0.81, blue: 0.96, alpha: 1)
-        case "LEVEL 7": return NSColor(calibratedRed: 0.92, green: 0.82, blue: 0.95, alpha: 1)
-        default: return .white
+        if !text.isEmpty {
+            drawText(text, in: rect.insetBy(dx: 3, dy: 2), size: size, bold: bold, alignment: alignment)
         }
     }
 
-    private func drawLogo(in rect: NSRect) {
-        guard let url = Bundle.main.url(forResource: "BuligLogo", withExtension: "jpg"),
+    private func drawImage(resource: String, ext: String, in rect: NSRect) {
+        guard let url = Bundle.main.url(forResource: resource, withExtension: ext),
               let image = NSImage(contentsOf: url) else { return }
+
+        let imageSize = image.size
+        guard imageSize.width > 0, imageSize.height > 0 else { return }
+        let scale = min(rect.width / imageSize.width, rect.height / imageSize.height)
+        let drawSize = NSSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        let drawRect = NSRect(
+            x: rect.midX - drawSize.width / 2,
+            y: rect.midY - drawSize.height / 2,
+            width: drawSize.width,
+            height: drawSize.height
+        )
         image.draw(
-            in: rect,
+            in: drawRect,
             from: .zero,
             operation: .sourceOver,
             fraction: 1,
@@ -367,43 +431,67 @@ final class NativeReportView: NSView {
         let w = paperSize.width - leftMargin - rightMargin
         var y = pageOriginY + topMargin
 
-        let brandH: CGFloat = 48
-        drawText("DepEd\nBukidnon",
-                 in: NSRect(x: x, y: y, width: 105, height: brandH),
-                 size: 15, bold: true, alignment: .center,
-                 color: NSColor(calibratedRed: 0.07, green: 0.29, blue: 0.57, alpha: 1))
+        let brandH: CGFloat = 60
+        drawImage(
+            resource: "DepEdBukidnonSeal",
+            ext: "jpg",
+            in: NSRect(x: x, y: y, width: 70, height: brandH)
+        )
 
-        let agencyRect = NSRect(x: x + 110, y: y, width: w - 250, height: brandH)
+        let agencyX = x + 78
+        let logoW: CGFloat = min(160, w * 0.32)
+        let agencyW = max(140, w - 78 - logoW - 8)
         let agency = [
             "Department of Education",
             snapshot.settings.region,
             snapshot.settings.division,
             snapshot.settings.schoolName
         ].filter { !$0.isEmpty }.joined(separator: "\n")
-        drawText(agency, in: agencyRect, size: 10.5, bold: false, alignment: .center)
+        drawText(
+            agency,
+            in: NSRect(x: agencyX, y: y, width: agencyW, height: brandH),
+            size: 10.5,
+            alignment: .center
+        )
 
-        drawLogo(in: NSRect(x: x + w - 125, y: y + 1, width: 125, height: brandH - 2))
+        drawImage(
+            resource: "ReportBuligLogo",
+            ext: "jpg",
+            in: NSRect(x: x + w - logoW, y: y, width: logoW, height: brandH)
+        )
         y += brandH
 
-        drawText("BUKIDNON'S UNIFIED LITERACY AND INTERVENTION GATEWAY",
-                 in: NSRect(x: x, y: y, width: w, height: 16),
-                 size: 12, bold: true, alignment: .center)
+        drawText(
+            "BUKIDNON'S UNIFIED LITERACY AND INTERVENTION GATEWAY",
+            in: NSRect(x: x, y: y, width: w, height: 16),
+            size: 12,
+            bold: true,
+            alignment: .center
+        )
         y += 16
 
-        drawText("Building Up Literacy, Inspiring Growth",
-                 in: NSRect(x: x, y: y, width: w, height: 14),
-                 size: 12, bold: true, alignment: .center)
-        y += 14
+        drawText(
+            "Building Up Literacy, Inspiring Growth",
+            in: NSRect(x: x, y: y, width: w, height: 15),
+            size: 12,
+            bold: true,
+            alignment: .center
+        )
+        y += 15
 
-        drawText(title,
-                 in: NSRect(x: x, y: y, width: w, height: 22),
-                 size: 16, bold: true, alignment: .center)
-        y += 24
+        drawText(
+            title,
+            in: NSRect(x: x, y: y, width: w, height: 23),
+            size: 16,
+            bold: true,
+            alignment: .center
+        )
+        y += 25
 
-        let rowH: CGFloat = 20
-        let widths = [w * 0.18, w * 0.32, w * 0.18, w * 0.32]
+        let rowH: CGFloat = 26
+        let widths = [w * 0.18, w * 0.32, w * 0.20, w * 0.30]
         let rows: [[String]] = [
-            ["Adviser", snapshot.settings.adviser, "ASSESSMENT PERIOD", snapshot.stage],
+            ["Adviser", snapshot.settings.adviser, "ASSESSMENT\nPERIOD", snapshot.stage],
             ["Grade Level", snapshot.settings.gradeLevel, "Term", snapshot.term],
             ["Section", snapshot.settings.section, "Assessment Tool", snapshot.settings.assessmentTool],
             ["", "", "SUBJECT", snapshot.settings.subject]
@@ -412,20 +500,86 @@ final class NativeReportView: NSView {
         for r in rows {
             var cx = x
             for i in 0..<4 {
+                let isLabel = i == 0 || i == 2
                 cell(
                     r[i],
                     rect: NSRect(x: cx, y: y, width: widths[i], height: rowH),
-                    bold: i == 0 || i == 2,
-                    alignment: i == 0 || i == 2 ? .center : .left,
-                    size: bodyFontSize,
+                    bold: isLabel,
+                    alignment: isLabel ? .center : .left,
+                    size: isLabel ? 10.2 : 12,
                     borderWidth: 1.1
                 )
                 cx += widths[i]
             }
             y += rowH
         }
-
         return y
+    }
+
+    private func drawSignatureBlock(
+        pageY: CGFloat,
+        y requestedY: CGFloat,
+        x: CGFloat,
+        width: CGFloat,
+        includeDate: Bool
+    ) {
+        let sigW = (width - 30) / 2
+        let blockHeight: CGFloat = 68
+        let maxY = pageY + paperSize.height - bottomMargin - blockHeight
+        let y = min(requestedY, maxY)
+
+        drawText("Submitted by:", in: NSRect(x: x, y: y, width: sigW, height: 14), size: 10)
+        drawText("Noted by:", in: NSRect(x: x + sigW + 30, y: y, width: sigW, height: 14), size: 10)
+
+        // Small blank area specifically reserved for the actual signature.
+        let nameY = y + 31
+        drawText(
+            snapshot.settings.adviser,
+            in: NSRect(x: x, y: nameY, width: sigW, height: 16),
+            size: 10.5, bold: true, alignment: .center
+        )
+        drawText(
+            snapshot.settings.schoolHead,
+            in: NSRect(x: x + sigW + 30, y: nameY, width: sigW, height: 16),
+            size: 10.5, bold: true, alignment: .center
+        )
+
+        NSColor.black.setStroke()
+        let lineY = nameY + 17
+        let p1 = NSBezierPath()
+        p1.move(to: NSPoint(x: x + 10, y: lineY))
+        p1.line(to: NSPoint(x: x + sigW - 10, y: lineY))
+        p1.stroke()
+
+        let p2 = NSBezierPath()
+        p2.move(to: NSPoint(x: x + sigW + 40, y: lineY))
+        p2.line(to: NSPoint(x: x + sigW * 2 + 20, y: lineY))
+        p2.stroke()
+
+        drawText(
+            "Class Adviser",
+            in: NSRect(x: x, y: lineY + 2, width: sigW, height: 13),
+            size: 9.5, alignment: .center
+        )
+        drawText(
+            snapshot.settings.schoolHeadPosition,
+            in: NSRect(x: x + sigW + 30, y: lineY + 2, width: sigW, height: 13),
+            size: 9.5, alignment: .center
+        )
+
+        if includeDate {
+            drawText(
+                snapshot.generatedAt,
+                in: NSRect(
+                    x: x,
+                    y: pageY + paperSize.height - bottomMargin - 14,
+                    width: width,
+                    height: 12
+                ),
+                size: 8.5,
+                alignment: .right
+            )
+        }
     }
 
     private func drawCRM(pageIndex: Int) {
@@ -440,17 +594,21 @@ final class NativeReportView: NSView {
         let headerH: CGFloat = 32
 
         cell("", rect: NSRect(x: x, y: y, width: labelW, height: headerH),
-             fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true)
+             fillColor: NSColor(calibratedWhite: 0.85, alpha: 1))
         var cx = x + labelW
         for row in snapshot.crmRows {
             cell("", rect: NSRect(x: cx, y: y, width: levelW, height: headerH),
                  fillColor: NSColor(calibratedWhite: 0.85, alpha: 1))
-            drawText(row.level.replacingOccurrences(of: "LEVEL", with: "Level"),
-                     in: NSRect(x: cx + 2, y: y + 2, width: levelW - 4, height: 12),
-                     size: 8.8, bold: true, alignment: .center)
-            drawText(row.area.capitalized,
-                     in: NSRect(x: cx + 2, y: y + 14, width: levelW - 4, height: 16),
-                     size: 6.6, bold: false, alignment: .center)
+            drawText(
+                row.level.replacingOccurrences(of: "LEVEL", with: "Level"),
+                in: NSRect(x: cx + 2, y: y + 2, width: levelW - 4, height: 12),
+                size: 8.8, bold: true, alignment: .center
+            )
+            drawText(
+                row.area.capitalized,
+                in: NSRect(x: cx + 2, y: y + 14, width: levelW - 4, height: 16),
+                size: 6.6, alignment: .center
+            )
             cx += levelW
         }
         cell("Total", rect: NSRect(x: cx, y: y, width: totalW, height: headerH),
@@ -486,17 +644,24 @@ final class NativeReportView: NSView {
             let profileW = groupW * 0.50
             let countW = groupW * 0.25
 
-            cell("KEY STAGE \(snapshot.keyStage)",
-                 rect: NSRect(x: x, y: y, width: w, height: 18),
-                 fillColor: NSColor(calibratedWhite: 0.85, alpha: 1),
-                 bold: true, size: 11)
+            cell(
+                "KEY STAGE \(snapshot.keyStage)",
+                rect: NSRect(x: x, y: y, width: w, height: 18),
+                fillColor: NSColor(calibratedWhite: 0.85, alpha: 1),
+                bold: true,
+                size: 11
+            )
             y += 18
 
             cx = x
             for heading in ["BOSY", "MOSY", "EOSY"] {
-                cell(heading, rect: NSRect(x: cx, y: y, width: groupW, height: 18),
-                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1),
-                     bold: true, size: 10)
+                cell(
+                    heading,
+                    rect: NSRect(x: cx, y: y, width: groupW, height: 18),
+                    fillColor: NSColor(calibratedWhite: 0.85, alpha: 1),
+                    bold: true,
+                    size: 10
+                )
                 cx += groupW
             }
             y += 18
@@ -547,48 +712,16 @@ final class NativeReportView: NSView {
             }
             y += profileH
         } else {
-            cell("Set the Grade Level in Setup. Only the applicable Key Stage is printed.",
-                 rect: NSRect(x: x, y: y, width: w, height: 32),
-                 fillColor: NSColor(calibratedRed: 1, green: 0.92, blue: 0.92, alpha: 1),
-                 bold: true, alignment: .left, size: 10)
+            cell(
+                "Set the Grade Level in Setup. Only the applicable Key Stage is printed.",
+                rect: NSRect(x: x, y: y, width: w, height: 32),
+                fillColor: NSColor(calibratedRed: 1, green: 0.92, blue: 0.92, alpha: 1),
+                bold: true, alignment: .left, size: 10
+            )
             y += 32
         }
 
-        let signatureTop = min(pageY + paperSize.height - bottomMargin - 42, y + 5)
-        let sigW = (w - 110) / 2
-        drawText("Submitted by:", in: NSRect(x: x, y: signatureTop, width: sigW, height: 15), size: 10)
-        drawText("Noted by:", in: NSRect(x: x + sigW + 30, y: signatureTop, width: sigW, height: 15), size: 10)
-
-        let lineY = signatureTop + 24
-        NSColor.black.setStroke()
-        let p1 = NSBezierPath()
-        p1.move(to: NSPoint(x: x + 15, y: lineY))
-        p1.line(to: NSPoint(x: x + sigW - 15, y: lineY))
-        p1.stroke()
-        let p2 = NSBezierPath()
-        p2.move(to: NSPoint(x: x + sigW + 45, y: lineY))
-        p2.line(to: NSPoint(x: x + sigW * 2 + 15, y: lineY))
-        p2.stroke()
-
-        drawText(snapshot.settings.adviser,
-                 in: NSRect(x: x, y: lineY - 15, width: sigW, height: 18),
-                 size: 10.5, bold: true, alignment: .center)
-        drawText(snapshot.settings.schoolHead,
-                 in: NSRect(x: x + sigW + 30, y: lineY - 15, width: sigW, height: 18),
-                 size: 10.5, bold: true, alignment: .center)
-        drawText("Class Adviser",
-                 in: NSRect(x: x, y: lineY + 2, width: sigW, height: 14),
-                 size: 9.5, alignment: .center)
-        drawText(snapshot.settings.schoolHeadPosition,
-                 in: NSRect(x: x + sigW + 30, y: lineY + 2, width: sigW, height: 14),
-                 size: 9.5, alignment: .center)
-
-        drawText(snapshot.generatedAt,
-                 in: NSRect(x: x + w - 105, y: lineY - 15, width: 105, height: 18),
-                 size: 9, alignment: .center)
-        drawText("Date Generated",
-                 in: NSRect(x: x + w - 105, y: lineY + 2, width: 105, height: 14),
-                 size: 8.5, alignment: .center)
+        drawSignatureBlock(pageY: pageY, y: y + 5, x: x, width: w, includeDate: true)
     }
 
     private enum ListEntry {
@@ -619,43 +752,63 @@ final class NativeReportView: NSView {
         let pageY = CGFloat(pageIndex) * paperSize.height
         let x = leftMargin
         let w = paperSize.width - leftMargin - rightMargin
-        var y = drawHeader(pageOriginY: pageY, title: "LIST OF PUPILS") + 8
+
+        // Full DepEd/BULIG title + class information appears on FIRST PAGE ONLY.
+        var y: CGFloat
+        if pageIndex == 0 {
+            y = drawHeader(pageOriginY: pageY, title: "LIST OF PUPILS") + 8
+        } else {
+            y = pageY + topMargin
+        }
 
         let widths: [CGFloat] = [30, 165, 92, 78, w - 30 - 165 - 92 - 78]
         let headerH: CGFloat = 28
         let headers = ["NO.", "LEARNER", "Reading Level", "Component/Level", "Color Coding"]
         var cx = x
         for i in 0..<headers.count {
-            cell(headers[i], rect: NSRect(x: cx, y: y, width: widths[i], height: headerH),
-                 fillColor: NSColor(calibratedWhite: 0.85, alpha: 1),
-                 bold: true, size: 9)
+            cell(
+                headers[i],
+                rect: NSRect(x: cx, y: y, width: widths[i], height: headerH),
+                fillColor: NSColor(calibratedWhite: 0.85, alpha: 1),
+                bold: true,
+                size: 9
+            )
             cx += widths[i]
         }
         y += headerH
 
         let entries = allListEntries()
-        let start = pageIndex * 16
-        let end = min(entries.count, start + 16)
-        let rowH: CGFloat = 26
+        let start = pupilPageCounts.prefix(pageIndex).reduce(0, +)
+        let count = pageIndex < pupilPageCounts.count ? pupilPageCounts[pageIndex] : 0
+        let end = min(entries.count, start + count)
+        let rowH: CGFloat = 24
 
         if start < end {
             for entry in entries[start..<end] {
                 switch entry {
                 case .group(let label):
-                    cell(label, rect: NSRect(x: x, y: y, width: w, height: rowH),
-                         fillColor: NSColor(calibratedWhite: 0.90, alpha: 1),
-                         bold: true, size: 11)
+                    cell(
+                        label,
+                        rect: NSRect(x: x, y: y, width: w, height: rowH),
+                        fillColor: NSColor(calibratedWhite: 0.90, alpha: 1),
+                        bold: true,
+                        size: 11
+                    )
+
                 case .pupil(let n, let pupil):
-                    let values = [String(n), pupil.name, pupil.area.capitalized, pupil.level, pupil.level]
+                    // Color Coding is COLOR ONLY. No level text is printed in the color cell.
+                    let values = [String(n), pupil.name, pupil.area.capitalized, pupil.level, ""]
                     cx = x
                     for i in 0..<5 {
-                        let fillColor: NSColor? = i == 4 ? colorForLevel(pupil.level) : nil
-                        cell(values[i],
-                             rect: NSRect(x: cx, y: y, width: widths[i], height: rowH),
-                             fillColor: fillColor,
-                             bold: i == 1,
-                             alignment: i == 1 ? .left : .center,
-                             size: i == 2 ? 8.2 : 10)
+                        let fillColor: NSColor? = i == 4 ? reportLevelColor(pupil.level) : nil
+                        cell(
+                            values[i],
+                            rect: NSRect(x: cx, y: y, width: widths[i], height: rowH),
+                            fillColor: fillColor,
+                            bold: i == 1,
+                            alignment: i == 1 ? .left : .center,
+                            size: i == 2 ? 8.2 : 10
+                        )
                         cx += widths[i]
                     }
                 }
@@ -664,53 +817,49 @@ final class NativeReportView: NSView {
         }
 
         if pageIndex == pageCount - 1 {
-            y += 10
-            let summaryW = min(w * 0.68, 310)
-            let col = summaryW / 4
-            cell("TOTAL ENROLLMENT:", rect: NSRect(x: x, y: y, width: col * 2, height: 22),
-                 bold: true, alignment: .left, size: 10)
-            cell(String(snapshot.maleCount + snapshot.femaleCount),
-                 rect: NSRect(x: x + col * 2, y: y, width: col, height: 22),
-                 bold: true, size: 10)
-            cell("MALE: \(snapshot.maleCount)",
-                 rect: NSRect(x: x + col * 3, y: y, width: col, height: 22),
-                 bold: true, size: 9)
+            y += 8
+
+            let summaryW = min(w * 0.72, 325)
+            let labelW = summaryW * 0.48
+            let countW = summaryW * 0.16
+            let sexLabelW = summaryW * 0.18
+            let sexCountW = summaryW - labelW - countW - sexLabelW
+
+            cell(
+                "TOTAL ENROLLMENT:",
+                rect: NSRect(x: x, y: y, width: labelW, height: 22),
+                bold: true, alignment: .left, size: 10
+            )
+            cell(
+                String(snapshot.maleCount + snapshot.femaleCount),
+                rect: NSRect(x: x + labelW, y: y, width: countW, height: 22),
+                bold: true, size: 10
+            )
+            cell(
+                "MALE:",
+                rect: NSRect(x: x + labelW + countW, y: y, width: sexLabelW, height: 22),
+                bold: true, size: 9
+            )
+            cell(
+                String(snapshot.maleCount),
+                rect: NSRect(x: x + labelW + countW + sexLabelW, y: y, width: sexCountW, height: 22),
+                size: 10
+            )
             y += 22
-            cell("FEMALE: \(snapshot.femaleCount)",
-                 rect: NSRect(x: x + col * 3, y: y, width: col, height: 22),
-                 bold: true, size: 9)
-            y += 30
 
-            let sigW = (w - 30) / 2
-            drawText("Submitted by:", in: NSRect(x: x, y: y, width: sigW, height: 14), size: 10)
-            drawText("Noted by:", in: NSRect(x: x + sigW + 30, y: y, width: sigW, height: 14), size: 10)
-            let lineY = y + 24
+            cell(
+                "FEMALE:",
+                rect: NSRect(x: x + labelW + countW, y: y, width: sexLabelW, height: 22),
+                bold: true, size: 9
+            )
+            cell(
+                String(snapshot.femaleCount),
+                rect: NSRect(x: x + labelW + countW + sexLabelW, y: y, width: sexCountW, height: 22),
+                size: 10
+            )
+            y += 25
 
-            let p1 = NSBezierPath()
-            p1.move(to: NSPoint(x: x + 10, y: lineY))
-            p1.line(to: NSPoint(x: x + sigW - 10, y: lineY))
-            p1.stroke()
-            let p2 = NSBezierPath()
-            p2.move(to: NSPoint(x: x + sigW + 40, y: lineY))
-            p2.line(to: NSPoint(x: x + sigW * 2 + 20, y: lineY))
-            p2.stroke()
-
-            drawText(snapshot.settings.adviser,
-                     in: NSRect(x: x, y: lineY - 15, width: sigW, height: 18),
-                     size: 10.5, bold: true, alignment: .center)
-            drawText(snapshot.settings.schoolHead,
-                     in: NSRect(x: x + sigW + 30, y: lineY - 15, width: sigW, height: 18),
-                     size: 10.5, bold: true, alignment: .center)
-            drawText("Class Adviser",
-                     in: NSRect(x: x, y: lineY + 2, width: sigW, height: 14),
-                     size: 9.5, alignment: .center)
-            drawText(snapshot.settings.schoolHeadPosition,
-                     in: NSRect(x: x + sigW + 30, y: lineY + 2, width: sigW, height: 14),
-                     size: 9.5, alignment: .center)
-
-            drawText(snapshot.generatedAt,
-                     in: NSRect(x: x, y: pageY + paperSize.height - bottomMargin - 16, width: w, height: 14),
-                     size: 8.5, alignment: .right)
+            drawSignatureBlock(pageY: pageY, y: y, x: x, width: w, includeDate: true)
         }
     }
 
@@ -753,7 +902,6 @@ final class NativeReportView: NSView {
 
     func pdfData() -> Data? {
         let output = PDFDocument()
-
         for pageIndex in 0..<pageCount {
             let rect = rectForPage(pageIndex + 1)
             let onePageData = dataWithPDF(inside: rect)
@@ -763,7 +911,6 @@ final class NativeReportView: NSView {
             }
             output.insert(page, at: output.pageCount)
         }
-
         return output.dataRepresentation()
     }
 }
@@ -2729,6 +2876,37 @@ struct ReportsView: View {
                         .padding(12)
                     }
                 }
+
+                GroupBox("Color Legend") {
+                    LazyVGrid(
+                        columns: [
+                            GridItem(.flexible(), spacing: 12),
+                            GridItem(.flexible(), spacing: 12),
+                            GridItem(.flexible(), spacing: 12)
+                        ],
+                        alignment: .leading,
+                        spacing: 10
+                    ) {
+                        ForEach(readingLevels) { level in
+                            HStack(spacing: 9) {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color(nsColor: reportLevelColor(level.code)))
+                                    .frame(width: 34, height: 22)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .stroke(Color.secondary.opacity(0.45), lineWidth: 1)
+                                    )
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(level.code).bold()
+                                    Text(level.area.capitalized)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                    .padding(10)
+                }
             }
             .padding(28)
         }
@@ -2782,7 +2960,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.15 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.16 • Offline macOS App")
             }
         }
     }
