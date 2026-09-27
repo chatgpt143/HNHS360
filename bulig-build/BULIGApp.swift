@@ -188,38 +188,114 @@ enum PrintoutType: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum ReportOutput {
+    case print
+    case preview
+    case savePDF(URL)
+}
+
 final class HTMLPrintCoordinator: NSObject, WKNavigationDelegate {
     private let webView: WKWebView
     private let orientation: NSPrintInfo.PaperOrientation
-    private let completion: () -> Void
+    private let output: ReportOutput
+    private let completion: (Bool) -> Void
+    private var hostWindow: NSWindow?
 
-    init(html: String, orientation: NSPrintInfo.PaperOrientation, completion: @escaping () -> Void) {
-        self.webView = WKWebView(frame: NSRect(x: 0, y: 0, width: orientation == .landscape ? 1120 : 790, height: 1100))
+    init(
+        html: String,
+        orientation: NSPrintInfo.PaperOrientation,
+        output: ReportOutput,
+        completion: @escaping (Bool) -> Void
+    ) {
+        let width: CGFloat = orientation == .landscape ? 1120 : 790
+        self.webView = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: 1400))
         self.orientation = orientation
+        self.output = output
         self.completion = completion
         super.init()
-        self.webView.navigationDelegate = self
-        self.webView.loadHTMLString(html, baseURL: Bundle.main.resourceURL)
+
+        webView.navigationDelegate = self
+        webView.setValue(false, forKey: "drawsBackground")
+
+        // Keep the web view attached to a real AppKit window while rendering.
+        // Printing an unattached WKWebView can result in a blank PDF on macOS.
+        let window = NSWindow(
+            contentRect: NSRect(x: -12000, y: -12000, width: width, height: 1400),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.backgroundColor = .white
+        window.alphaValue = 0.01
+        window.contentView = webView
+        window.orderBack(nil)
+        hostWindow = window
+
+        webView.loadHTMLString(html, baseURL: Bundle.main.resourceURL)
+    }
+
+    private func printInfo() -> NSPrintInfo {
+        let info = NSPrintInfo.shared.copy() as! NSPrintInfo
+        info.paperSize = NSSize(width: 595.2, height: 841.8) // A4
+        info.orientation = orientation
+        info.leftMargin = 18
+        info.rightMargin = 18
+        info.topMargin = 18
+        info.bottomMargin = 18
+        info.horizontalPagination = .fit
+        info.verticalPagination = .automatic
+        info.isHorizontallyCentered = true
+        info.isVerticallyCentered = false
+        info.dictionary()[.headerAndFooter] = false
+        return info
+    }
+
+    private func finish(_ success: Bool) {
+        hostWindow?.orderOut(nil)
+        hostWindow?.close()
+        hostWindow = nil
+        completion(success)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            let info = NSPrintInfo.shared.copy() as! NSPrintInfo
-            info.paperSize = NSSize(width: 595.2, height: 841.8)
-            info.orientation = self.orientation
-            info.leftMargin = 36
-            info.rightMargin = 36
-            info.topMargin = 36
-            info.bottomMargin = 36
-            info.horizontalPagination = .fit
-            info.verticalPagination = .automatic
-            info.isHorizontallyCentered = true
-            let op = webView.printOperation(with: info)
-            op.showsPrintPanel = true
-            op.showsProgressPanel = true
-            op.run()
-            self.completion()
+        // Give local images, CSS, and WebKit's print layout time to finish.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            let info = self.printInfo()
+
+            switch self.output {
+            case .print:
+                info.jobDisposition = .spool
+                let op = webView.printOperation(with: info)
+                op.showsPrintPanel = true
+                op.showsProgressPanel = true
+                self.finish(op.run())
+
+            case .preview:
+                info.jobDisposition = .preview
+                let op = webView.printOperation(with: info)
+                op.showsPrintPanel = false
+                op.showsProgressPanel = true
+                self.finish(op.run())
+
+            case .savePDF(let url):
+                info.jobDisposition = .save
+                info.dictionary()[.jobSavingURL] = url as NSURL
+                let op = webView.printOperation(with: info)
+                op.showsPrintPanel = false
+                op.showsProgressPanel = true
+                let success = op.run() && FileManager.default.fileExists(atPath: url.path)
+                self.finish(success)
+            }
         }
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        finish(false)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        finish(false)
     }
 }
 
@@ -1066,20 +1142,52 @@ final class AppStore: ObservableObject {
         """
     }
 
-    func printReport(stage: String, type: PrintoutType) {
-        let html: String
-        let orientation: NSPrintInfo.PaperOrientation
+    private func reportDocument(stage: String, type: PrintoutType) -> (html: String, orientation: NSPrintInfo.PaperOrientation) {
         switch type {
         case .classroomMonitoring:
-            html = classroomMonitoringHTML(stage: stage)
-            orientation = .landscape
+            return (classroomMonitoringHTML(stage: stage), .landscape)
         case .pupilList:
-            html = pupilListHTML(stage: stage)
-            orientation = .portrait
+            return (pupilListHTML(stage: stage), .portrait)
         }
-        printCoordinator = HTMLPrintCoordinator(html: html, orientation: orientation) { [weak self] in
-            self?.printCoordinator = nil
+    }
+
+    private func beginReportOutput(stage: String, type: PrintoutType, output: ReportOutput) {
+        let document = reportDocument(stage: stage, type: type)
+        statusMessage = "Preparing report…"
+        printCoordinator = HTMLPrintCoordinator(
+            html: document.html,
+            orientation: document.orientation,
+            output: output
+        ) { [weak self] success in
+            guard let self else { return }
+            switch output {
+            case .print:
+                self.statusMessage = success ? "Report sent to print" : "Printing cancelled or failed"
+            case .preview:
+                self.statusMessage = success ? "Report opened in Preview" : "Preview failed"
+            case .savePDF:
+                self.statusMessage = success ? "PDF saved" : "PDF save failed"
+            }
+            self.printCoordinator = nil
         }
+    }
+
+    func previewReport(stage: String, type: PrintoutType) {
+        beginReportOutput(stage: stage, type: type, output: .preview)
+    }
+
+    func printReport(stage: String, type: PrintoutType) {
+        beginReportOutput(stage: stage, type: type, output: .print)
+    }
+
+    func savePDFReport(stage: String, type: PrintoutType) {
+        let panel = NSSavePanel()
+        panel.title = "Save BULIG Report as PDF"
+        let reportName = type == .classroomMonitoring ? "Classroom_Reading_Monitoring_Report" : "List_of_Pupils"
+        panel.nameFieldStringValue = "BULIG_\(stage)_\(reportName).pdf"
+        panel.allowedFileTypes = ["pdf"]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        beginReportOutput(stage: stage, type: type, output: .savePDF(url))
     }
 
     func exportCSV(stage: String) {
@@ -2014,8 +2122,14 @@ struct ReportsView: View {
                     .frame(width: 210)
 
                     Spacer()
+                    Button { store.previewReport(stage: stage, type: printout) } label: {
+                        Label("Preview", systemImage: "eye")
+                    }
                     Button { store.printReport(stage: stage, type: printout) } label: {
-                        Label("Print / Save PDF", systemImage: "printer")
+                        Label("Print", systemImage: "printer")
+                    }
+                    Button { store.savePDFReport(stage: stage, type: printout) } label: {
+                        Label("Save as PDF", systemImage: "arrow.down.doc")
                     }
                     .buttonStyle(.borderedProminent)
                 }
@@ -2131,7 +2245,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.12 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.13 • Offline macOS App")
             }
         }
     }
