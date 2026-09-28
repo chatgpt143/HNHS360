@@ -18,6 +18,8 @@ struct SchoolSettings: Codable, Equatable {
     var adviser = ""
     var assessmentTool = "CRLA"
     var subject = "ENGLISH"
+    var leftReportLogoFile: String? = nil
+    var rightReportLogoFile: String? = nil
 }
 
 struct PreAssessment: Codable, Equatable {
@@ -244,6 +246,8 @@ struct NativeReportSnapshot {
     let maleCount: Int
     let femaleCount: Int
     let generatedAt: String
+    let leftLogoData: Data?
+    let rightLogoData: Data?
 }
 
 final class NativeReportView: NSView {
@@ -426,50 +430,96 @@ final class NativeReportView: NSView {
         )
     }
 
+    private func drawImage(data: Data?, fallbackResource: String, fallbackExtension: String, in rect: NSRect) {
+        let image: NSImage?
+        if let data, let uploaded = NSImage(data: data) {
+            image = uploaded
+        } else if let url = Bundle.main.url(forResource: fallbackResource, withExtension: fallbackExtension) {
+            image = NSImage(contentsOf: url)
+        } else {
+            image = nil
+        }
+
+        guard let image else { return }
+        let imageSize = image.size
+        guard imageSize.width > 0, imageSize.height > 0 else { return }
+
+        let scale = min(rect.width / imageSize.width, rect.height / imageSize.height)
+        let drawSize = NSSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        let drawRect = NSRect(
+            x: rect.midX - drawSize.width / 2,
+            y: rect.midY - drawSize.height / 2,
+            width: drawSize.width,
+            height: drawSize.height
+        )
+
+        image.draw(
+            in: drawRect,
+            from: .zero,
+            operation: .sourceOver,
+            fraction: 1,
+            respectFlipped: true,
+            hints: nil
+        )
+    }
+
     private func drawHeader(pageOriginY: CGFloat, title: String) -> CGFloat {
         let x = leftMargin
         let w = paperSize.width - leftMargin - rightMargin
         var y = pageOriginY + topMargin
-
-        // Match the Excel template: Department of Education is centered
-        // independently across the printable page. Logos sit below it on
-        // the left and right and never shift the center headings.
-        drawText(
-            "Department of Education",
-            in: NSRect(x: x, y: y, width: w, height: 17),
-            size: 12,
-            alignment: .center
-        )
-        y += 18
-
         let landscape = paperSize.width > paperSize.height
-        let logoBandH: CGFloat = landscape ? 74 : 68
-        let sealSize: CGFloat = landscape ? 78 : 68
-        let buligW: CGFloat = landscape ? 190 : 150
-        let buligH: CGFloat = landscape ? 72 : 58
+
+        // Complete institutional header. Text remains centered on the page;
+        // logo sizes never determine the text center.
+        let bandH: CGFloat = landscape ? 76 : 84
+        let leftBoxW: CGFloat = landscape ? 92 : 78
+        let rightBoxW: CGFloat = landscape ? 180 : 130
+        let symmetricInset = max(leftBoxW, rightBoxW) + 8
 
         drawImage(
-            resource: "DepEdBukidnonSeal",
-            ext: "jpg",
-            in: NSRect(
-                x: x + (landscape ? 18 : 8),
-                y: y + (logoBandH - sealSize) / 2,
-                width: sealSize,
-                height: sealSize
-            )
+            data: snapshot.leftLogoData,
+            fallbackResource: "DepEdBukidnonSeal",
+            fallbackExtension: "jpg",
+            in: NSRect(x: x, y: y, width: leftBoxW, height: bandH)
         )
 
         drawImage(
-            resource: "ReportBuligLogo",
-            ext: "jpg",
-            in: NSRect(
-                x: x + w - buligW - (landscape ? 10 : 2),
-                y: y + (logoBandH - buligH) / 2,
-                width: buligW,
-                height: buligH
-            )
+            data: snapshot.rightLogoData,
+            fallbackResource: "ReportBuligLogo",
+            fallbackExtension: "jpg",
+            in: NSRect(x: x + w - rightBoxW, y: y, width: rightBoxW, height: bandH)
         )
-        y += logoBandH
+
+        let centerRect = NSRect(
+            x: x + symmetricInset,
+            y: y,
+            width: max(80, w - symmetricInset * 2),
+            height: bandH
+        )
+
+        let headerLines = [
+            "Department of Education",
+            snapshot.settings.region,
+            snapshot.settings.division,
+            snapshot.settings.schoolName
+        ].filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+        let lineH = bandH / CGFloat(max(headerLines.count, 1))
+        for (index, line) in headerLines.enumerated() {
+            drawText(
+                line,
+                in: NSRect(
+                    x: centerRect.minX,
+                    y: centerRect.minY + CGFloat(index) * lineH,
+                    width: centerRect.width,
+                    height: lineH
+                ),
+                size: landscape ? 10.8 : 10.2,
+                bold: index == headerLines.count - 1,
+                alignment: .center
+            )
+        }
+        y += bandH
 
         drawText(
             "BUKIDNON'S UNIFIED LITERACY AND INTERVENTION GATEWAY",
@@ -943,6 +993,72 @@ final class AppStore: ObservableObject {
     }
 
     private var dataURL: URL { supportFolder.appendingPathComponent("data.json") }
+
+    private func logoURL(fileName: String?) -> URL? {
+        guard let fileName, !fileName.isEmpty else { return nil }
+        return supportFolder.appendingPathComponent(fileName)
+    }
+
+    func reportLogoImage(left: Bool) -> NSImage? {
+        let fileName = left ? data.settings.leftReportLogoFile : data.settings.rightReportLogoFile
+        guard let url = logoURL(fileName: fileName) else { return nil }
+        return NSImage(contentsOf: url)
+    }
+
+    func reportLogoData(left: Bool) -> Data? {
+        let fileName = left ? data.settings.leftReportLogoFile : data.settings.rightReportLogoFile
+        guard let url = logoURL(fileName: fileName) else { return nil }
+        return try? Data(contentsOf: url)
+    }
+
+    func chooseReportLogo(left: Bool) -> String? {
+        let panel = NSOpenPanel()
+        panel.title = left ? "Choose Left Report Logo" : "Choose Right Report Logo"
+        panel.message = "Choose a PNG, JPG, or JPEG image to use on all printed BULIG reports."
+        panel.allowedFileTypes = ["png", "jpg", "jpeg"]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+
+        guard panel.runModal() == .OK, let sourceURL = panel.url else { return nil }
+        guard let image = NSImage(contentsOf: sourceURL) else {
+            return "The selected file could not be opened as an image."
+        }
+
+        guard let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else {
+            return "The selected image could not be prepared for the report."
+        }
+
+        let fileName = left ? "ReportLeftLogo.png" : "ReportRightLogo.png"
+        let destination = supportFolder.appendingPathComponent(fileName)
+
+        do {
+            try png.write(to: destination, options: .atomic)
+            if left {
+                data.settings.leftReportLogoFile = fileName
+            } else {
+                data.settings.rightReportLogoFile = fileName
+            }
+            save()
+            return left ? "Left report logo saved." : "Right report logo saved."
+        } catch {
+            return "The logo could not be saved."
+        }
+    }
+
+    func clearReportLogo(left: Bool) {
+        let fileName = left ? data.settings.leftReportLogoFile : data.settings.rightReportLogoFile
+        if let url = logoURL(fileName: fileName) {
+            try? FileManager.default.removeItem(at: url)
+        }
+        if left {
+            data.settings.leftReportLogoFile = nil
+        } else {
+            data.settings.rightReportLogoFile = nil
+        }
+        save()
+    }
 
     func save() {
         do {
@@ -1818,7 +1934,9 @@ final class AppStore: ObservableObject {
             pupils: pupils,
             maleCount: data.learners.filter { $0.sex == "Male" }.count,
             femaleCount: data.learners.filter { $0.sex == "Female" }.count,
-            generatedAt: DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short)
+            generatedAt: DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short),
+            leftLogoData: reportLogoData(left: true),
+            rightLogoData: reportLogoData(left: false)
         )
     }
 
@@ -2079,11 +2197,67 @@ struct DashboardView: View {
 struct SetupView: View {
     @ObservedObject var store: AppStore
     @State private var showSavedConfirmation = false
+    @State private var logoMessage = ""
+    @State private var showLogoMessage = false
     let grades = (1...12).map(String.init)
+
+    @ViewBuilder
+    private func logoPreview(left: Bool, title: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).bold()
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.secondary.opacity(0.06))
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+
+                if let image = store.reportLogoImage(left: left) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .padding(10)
+                } else {
+                    VStack(spacing: 6) {
+                        Image(systemName: "photo")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                        Text("Using built-in default")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .frame(height: 115)
+
+            HStack {
+                Button {
+                    if let message = store.chooseReportLogo(left: left) {
+                        logoMessage = message
+                        showLogoMessage = true
+                    }
+                } label: {
+                    Label("Choose Logo", systemImage: "photo.badge.plus")
+                }
+                .buttonStyle(.borderedProminent)
+
+                if store.reportLogoImage(left: left) != nil {
+                    Button("Use Default") {
+                        store.clearReportLogo(left: left)
+                        logoMessage = "\(title) reset to the built-in default."
+                        showLogoMessage = true
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                PageHeader(title: "Setup", subtitle: "School and class information")
+                PageHeader(title: "Setup", subtitle: "School, class, and report information")
+
                 GroupBox("School Information") {
                     Form {
                         TextField("School Name", text: $store.data.settings.schoolName)
@@ -2096,6 +2270,22 @@ struct SetupView: View {
                     }
                     .padding(8)
                 }
+
+                GroupBox("Report Logos") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Choose the logos that will appear on every printed report. The left and right images are saved locally on this Mac.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack(alignment: .top, spacing: 20) {
+                            logoPreview(left: true, title: "Left Report Logo")
+                            Divider()
+                            logoPreview(left: false, title: "Right Report Logo")
+                        }
+                        .padding(8)
+                    }
+                }
+
                 GroupBox("Class Information") {
                     Form {
                         TextField("School Year", text: $store.data.settings.schoolYear)
@@ -2121,6 +2311,7 @@ struct SetupView: View {
                     }
                     .padding(8)
                 }
+
                 HStack {
                     Spacer()
                     Button("Save Setup") {
@@ -2135,7 +2326,12 @@ struct SetupView: View {
         .alert("Setup Saved", isPresented: $showSavedConfirmation) {
             Button("OK", role: .cancel) { }
         } message: {
-            Text("School and class information has been saved successfully.")
+            Text("School, class, and report settings have been saved successfully.")
+        }
+        .alert("Report Logo", isPresented: $showLogoMessage) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(logoMessage)
         }
     }
 }
@@ -2971,7 +3167,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.18 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.19 • Offline macOS App")
             }
         }
     }
