@@ -3409,11 +3409,200 @@ struct SetupView: View {
     }
 }
 
+
+struct LearnerProgressChart: View {
+    let store: AppStore
+    let learner: Learner
+
+    private var points: [(String, Int)] {
+        var output: [(String, Int)] = []
+        let pre = store.preAssessment(for: learner).level
+        if let index = readingLevels.firstIndex(where: { $0.code == pre }) {
+            output.append(("PRE", index + 1))
+        }
+        for ap in assessmentPeriods {
+            let hasEntry = learner.assessments[ap] != nil || learner.reactivationAPs.contains(ap)
+            guard hasEntry else { continue }
+            let level = store.currentLevel(learner, through: ap)
+            if let index = readingLevels.firstIndex(where: { $0.code == level }) {
+                output.append((ap, index + 1))
+            }
+        }
+        return output
+    }
+
+    var body: some View {
+        if points.count < 2 {
+            Text("More assessment data is needed to draw the progress graph.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 110)
+        } else {
+            GeometryReader { geo in
+                Canvas { context, size in
+                    let left: CGFloat = 30
+                    let right: CGFloat = 12
+                    let top: CGFloat = 10
+                    let bottom: CGFloat = 24
+                    let w = max(1, size.width - left - right)
+                    let h = max(1, size.height - top - bottom)
+
+                    for row in 0..<9 {
+                        let y = top + h * CGFloat(row) / 8
+                        var line = Path()
+                        line.move(to: CGPoint(x: left, y: y))
+                        line.addLine(to: CGPoint(x: size.width - right, y: y))
+                        context.stroke(line, with: .color(.secondary.opacity(0.10)), lineWidth: 1)
+                    }
+
+                    var path = Path()
+                    for i in points.indices {
+                        let x = left + w * CGFloat(i) / CGFloat(max(1, points.count - 1))
+                        let value = points[i].1
+                        let y = top + h * (1 - CGFloat(value - 1) / 8)
+                        if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
+                        else { path.addLine(to: CGPoint(x: x, y: y)) }
+
+                        let dot = CGRect(x: x - 3, y: y - 3, width: 6, height: 6)
+                        context.fill(Path(ellipseIn: dot), with: .color(.blue))
+                    }
+                    context.stroke(path, with: .color(.blue), style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                }
+
+                VStack {
+                    Spacer()
+                    HStack {
+                        Text(points.first?.0 ?? "")
+                        Spacer()
+                        if points.count > 2 {
+                            Text(points[points.count / 2].0)
+                            Spacer()
+                        }
+                        Text(points.last?.0 ?? "")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 30)
+                    .padding(.trailing, 12)
+                }
+            }
+            .frame(height: 150)
+        }
+    }
+}
+
+struct LearnerProgressSheet: View {
+    @ObservedObject var store: AppStore
+    let learner: Learner
+    @Environment(\.dismiss) private var dismiss
+
+    private func statusLabel(_ status: String) -> String {
+        switch status {
+        case "NLS": return "No Longer in School"
+        case "NLP": return "No Longer Participating"
+        case "TRANSFER OUT": return "Transfer Out"
+        default: return status
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(learner.displayName)
+                        .font(.title2.bold())
+                    Text("LRN \(learner.lrn.isEmpty ? "—" : learner.lrn) • \(learner.sex.isEmpty ? "Sex not set" : learner.sex)")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Close") { dismiss() }
+            }
+
+            GroupBox("Reading Progress") {
+                LearnerProgressChart(store: store, learner: learner)
+                    .padding(8)
+            }
+
+            List {
+                HStack {
+                    Text("Period").frame(width: 70, alignment: .leading)
+                    Text("Previous").frame(width: 95, alignment: .leading)
+                    Text("Result").frame(width: 145, alignment: .leading)
+                    Text("Current").frame(width: 95, alignment: .leading)
+                    Text("Notes").frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .font(.caption.bold())
+
+                let pre = store.preAssessment(for: learner)
+                HStack {
+                    Text("PRETEST").frame(width: 70, alignment: .leading).bold()
+                    Text("—").frame(width: 95, alignment: .leading)
+                    Text("Initial").frame(width: 145, alignment: .leading)
+                    Text(pre.level.isEmpty ? "—" : pre.level).frame(width: 95, alignment: .leading)
+                    Text("BOSY: \(pre.bosy.isEmpty ? "—" : pre.bosy) • MOSY: \(pre.mosy.isEmpty ? "—" : pre.mosy) • EOSY: \(pre.eosy.isEmpty ? "—" : pre.eosy)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                ForEach(assessmentPeriods, id: \.self) { ap in
+                    if let entry = learner.assessments[ap] {
+                        HStack(alignment: .top) {
+                            Text(ap).frame(width: 70, alignment: .leading).bold()
+                            Text(store.levelBeforeAP(learner, ap: ap).isEmpty ? "—" : store.levelBeforeAP(learner, ap: ap))
+                                .frame(width: 95, alignment: .leading)
+                            Text(statusLabel(entry.result.isEmpty ? "—" : entry.result))
+                                .frame(width: 145, alignment: .leading)
+                            Text(store.levelAfterAP(learner, ap: ap).isEmpty ? "—" : store.levelAfterAP(learner, ap: ap))
+                                .frame(width: 95, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 2) {
+                                if !entry.overrideLevel.isEmpty {
+                                    Text("Manual level adjustment")
+                                        .font(.caption.bold())
+                                }
+                                if !entry.effectiveDate.isEmpty {
+                                    Text("Effective: \(entry.effectiveDate)")
+                                        .font(.caption)
+                                }
+                                if !entry.note.isEmpty {
+                                    Text(entry.note)
+                                        .font(.caption)
+                                }
+                                if learner.reactivationAPs.contains(ap) {
+                                    Text("Reactivated in \(ap)")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(.green)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    } else if learner.reactivationAPs.contains(ap) {
+                        HStack {
+                            Text(ap).frame(width: 70, alignment: .leading).bold()
+                            Text("—").frame(width: 95, alignment: .leading)
+                            Text("REACTIVATED").frame(width: 145, alignment: .leading)
+                            Text(store.levelBeforeAP(learner, ap: ap)).frame(width: 95, alignment: .leading)
+                            Text("Learner returned to active monitoring.")
+                                .font(.caption)
+                                .foregroundStyle(.green)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+            }
+            .listStyle(.inset(alternatesRowBackgrounds: true))
+        }
+        .padding(22)
+        .frame(width: 900, height: 650)
+    }
+}
+
 struct LearnersView: View {
     @ObservedObject var store: AppStore
     @State private var importMessage = ""
     @State private var showImportAlert = false
     @State private var editingLearnerID: UUID? = nil
+    @State private var progressLearnerID: UUID? = nil
     @State private var editLRN = ""
     @State private var editFirstName = ""
     @State private var editMiddleInitial = ""
@@ -3422,6 +3611,24 @@ struct LearnersView: View {
     @State private var editSex = ""
     @State private var editDOB = ""
     @State private var learnerToRemove: Learner? = nil
+    @State private var searchText = ""
+    @State private var sexFilter = "All"
+
+    private var filteredLearners: [Learner] {
+        store.data.learners.filter { learner in
+            let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let matchesSearch = query.isEmpty ||
+                learner.displayName.lowercased().contains(query) ||
+                learner.lrn.lowercased().contains(query)
+            let matchesSex = sexFilter == "All" || learner.sex == sexFilter
+            return matchesSearch && matchesSex
+        }
+    }
+
+    private var progressLearner: Learner? {
+        guard let id = progressLearnerID else { return nil }
+        return store.data.learners.first(where: { $0.id == id })
+    }
 
     private func beginEdit(_ learner: Learner) {
         editingLearnerID = learner.id
@@ -3458,19 +3665,18 @@ struct LearnersView: View {
     }
 
     private func removeConfirmedLearner() {
-        guard let learner = learnerToRemove,
-              let index = store.data.learners.firstIndex(where: { $0.id == learner.id }) else {
+        guard let learner = learnerToRemove else {
             learnerToRemove = nil
             return
         }
-        store.data.learners.remove(at: index)
-        store.save()
+        store.removeLearner(learner.id)
         learnerToRemove = nil
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            PageHeader(title: "Learners", subtitle: "Learner master list and direct SF1 import")
+            PageHeader(title: "Learners", subtitle: "Learner master list, progress profiles, and direct SF1 import")
+
             HStack {
                 Button { store.addLearner() } label: {
                     Label("Add Learner", systemImage: "plus")
@@ -3501,85 +3707,88 @@ struct LearnersView: View {
             }
 
             HStack(spacing: 12) {
-                HStack(spacing: 7) {
-                    Image(systemName: "person.fill")
-                    Text("Male")
-                    Text("\(store.data.learners.filter { $0.sex == "Male" }.count)")
-                        .bold()
-                        .monospacedDigit()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(Color.blue.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 9))
+                DashboardMetricCard(
+                    title: "Male",
+                    value: "\(store.data.learners.filter { $0.sex == "Male" }.count)",
+                    symbol: "person.fill",
+                    tint: .blue
+                )
+                DashboardMetricCard(
+                    title: "Female",
+                    value: "\(store.data.learners.filter { $0.sex == "Female" }.count)",
+                    symbol: "person.fill",
+                    tint: .purple
+                )
+                DashboardMetricCard(
+                    title: "Total",
+                    value: "\(store.data.learners.count)",
+                    symbol: "person.2.fill",
+                    tint: .secondary
+                )
+            }
 
-                HStack(spacing: 7) {
-                    Image(systemName: "person.fill")
-                    Text("Female")
-                    Text("\(store.data.learners.filter { $0.sex == "Female" }.count)")
-                        .bold()
-                        .monospacedDigit()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(Color.pink.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 9))
+            HStack(spacing: 12) {
+                TextField("Search learner name or LRN", text: $searchText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 360)
 
-                HStack(spacing: 7) {
-                    Image(systemName: "person.2.fill")
-                    Text("Total")
-                    Text("\(store.data.learners.count)")
-                        .bold()
-                        .monospacedDigit()
+                Picker("Sex", selection: $sexFilter) {
+                    Text("All").tag("All")
+                    Text("Male").tag("Male")
+                    Text("Female").tag("Female")
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(Color.secondary.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 9))
+                .frame(width: 150)
+
+                Text("\(filteredLearners.count) shown")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 Spacer()
             }
 
-            Text("SF1 NAME is automatically separated into Last Name, First Name, Middle Initial, and Extension. You can correct any unusual name through Edit.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
             HStack(spacing: 10) {
-                Text("Last Name").bold().frame(width: 145, alignment: .leading)
-                Text("First Name").bold().frame(width: 185, alignment: .leading)
-                Text("MI").bold().frame(width: 38, alignment: .leading)
-                Text("Ext.").bold().frame(width: 55, alignment: .leading)
-                Text("LRN").bold().frame(width: 125, alignment: .leading)
-                Text("Sex").bold().frame(width: 60, alignment: .leading)
-                Text("Birth Date").bold().frame(width: 95, alignment: .leading)
+                Text("Last Name").bold().frame(width: 130, alignment: .leading)
+                Text("First Name").bold().frame(width: 160, alignment: .leading)
+                Text("MI").bold().frame(width: 32, alignment: .leading)
+                Text("Ext.").bold().frame(width: 45, alignment: .leading)
+                Text("LRN").bold().frame(width: 115, alignment: .leading)
+                Text("Sex").bold().frame(width: 55, alignment: .leading)
+                Text("Birth Date").bold().frame(width: 85, alignment: .leading)
                 Spacer()
-                Text("Actions").bold().frame(width: 165, alignment: .center)
+                Text("Actions").bold().frame(width: 260, alignment: .center)
             }
             .font(.caption)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 10)
 
             List {
-                ForEach(store.data.learners) { learner in
+                ForEach(filteredLearners) { learner in
                     HStack(spacing: 10) {
                         Text(learner.lastName.isEmpty ? "—" : learner.lastName)
-                            .frame(width: 145, alignment: .leading)
+                            .frame(width: 130, alignment: .leading)
                             .bold()
                         Text(learner.firstName.isEmpty ? "—" : learner.firstName)
-                            .frame(width: 185, alignment: .leading)
+                            .frame(width: 160, alignment: .leading)
                         Text(learner.middleInitial.isEmpty ? "—" : learner.middleInitial)
-                            .frame(width: 38, alignment: .leading)
+                            .frame(width: 32, alignment: .leading)
                         Text(learner.nameExtension.isEmpty ? "—" : learner.nameExtension)
-                            .frame(width: 55, alignment: .leading)
+                            .frame(width: 45, alignment: .leading)
                         Text(learner.lrn.isEmpty ? "—" : learner.lrn)
                             .font(.caption.monospacedDigit())
-                            .frame(width: 125, alignment: .leading)
+                            .frame(width: 115, alignment: .leading)
                         Text(learner.sex.isEmpty ? "—" : learner.sex)
-                            .frame(width: 60, alignment: .leading)
+                            .frame(width: 55, alignment: .leading)
                         Text(learner.dateOfBirth.isEmpty ? "—" : learner.dateOfBirth)
-                            .frame(width: 95, alignment: .leading)
+                            .frame(width: 85, alignment: .leading)
 
                         Spacer()
+
+                        Button {
+                            progressLearnerID = learner.id
+                        } label: {
+                            Label("Progress", systemImage: "chart.line.uptrend.xyaxis")
+                        }
+                        .buttonStyle(.bordered)
 
                         Button {
                             beginEdit(learner)
@@ -3591,9 +3800,10 @@ struct LearnersView: View {
                         Button(role: .destructive) {
                             learnerToRemove = learner
                         } label: {
-                            Label("Remove", systemImage: "trash")
+                            Image(systemName: "trash")
                         }
                         .buttonStyle(.bordered)
+                        .help("Remove learner")
                     }
                     .padding(.vertical, 6)
                 }
@@ -3625,21 +3835,25 @@ struct LearnersView: View {
 
                 HStack {
                     Spacer()
-                    Button("Cancel") {
-                        editingLearnerID = nil
-                    }
-                    Button("Save Changes") {
-                        saveEdit()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(
-                        editFirstName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                        editLastName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    )
+                    Button("Cancel") { editingLearnerID = nil }
+                    Button("Save Changes") { saveEdit() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(
+                            editFirstName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                            editLastName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        )
                 }
             }
             .padding(24)
             .frame(width: 560, height: 430)
+        }
+        .sheet(isPresented: Binding(
+            get: { progressLearnerID != nil },
+            set: { if !$0 { progressLearnerID = nil } }
+        )) {
+            if let learner = progressLearner {
+                LearnerProgressSheet(store: store, learner: learner)
+            }
         }
         .alert("SF1 Import", isPresented: $showImportAlert) {
             Button("OK", role: .cancel) { }
@@ -3650,15 +3864,11 @@ struct LearnersView: View {
             get: { learnerToRemove != nil },
             set: { if !$0 { learnerToRemove = nil } }
         )) {
-            Button("Cancel", role: .cancel) {
-                learnerToRemove = nil
-            }
-            Button("Remove", role: .destructive) {
-                removeConfirmedLearner()
-            }
+            Button("Cancel", role: .cancel) { learnerToRemove = nil }
+            Button("Remove", role: .destructive) { removeConfirmedLearner() }
         } message: {
             let name = learnerToRemove?.displayName.isEmpty == false ? learnerToRemove!.displayName : "this learner"
-            Text("Remove \(name)? This will also delete the learner's pre-assessment and AP1–AP15 records.")
+            Text("Remove \(name)? A restore point will be created automatically before the learner is deleted.")
         }
     }
 }
