@@ -3484,6 +3484,37 @@ struct DashboardView: View {
                 .frame(width: 620, height: 480)
             }
         }
+        .sheet(isPresented: Binding(
+            get: { !drilldownLearnerIDs.isEmpty },
+            set: { if !$0 { drilldownLearnerIDs = [] } }
+        )) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(drilldownTitle)
+                            .font(.title2.bold())
+                        Text("\(drilldownLearners.count) learner(s)")
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Close") { drilldownLearnerIDs = [] }
+                }
+
+                List(drilldownLearners) { learner in
+                    HStack {
+                        Text(learner.displayName).bold()
+                        Spacer()
+                        Text(learner.sex)
+                            .foregroundStyle(.secondary)
+                        Text(learner.lrn)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(22)
+            .frame(width: 650, height: 500)
+        }
     }
 }
 
@@ -4735,6 +4766,11 @@ struct ReportsView: View {
                         Label("Save as PDF", systemImage: "arrow.down.doc")
                     }
                     .buttonStyle(.borderedProminent)
+
+                    Button { store.exportAllReports() } label: {
+                        Label("Export All", systemImage: "folder.badge.plus")
+                    }
+                    .help("Export both official PDF reports for PRETEST and all APs with encoded data")
                 }
 
                 if printout == .classroomMonitoring {
