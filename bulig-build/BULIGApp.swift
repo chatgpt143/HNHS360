@@ -2513,7 +2513,12 @@ struct BrandView: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text("BULIG ReadTrack").font(.title2.bold())
-                Text("Reading Monitoring System for Teachers").font(.caption).foregroundStyle(.secondary)
+                Text("Version 0.25")
+                    .font(.caption.bold())
+                    .foregroundStyle(.blue)
+                Text("Reading Monitoring System for Teachers")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
             Spacer()
         }
@@ -5094,7 +5099,7 @@ struct BULIGReadTrackApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG ReadTrack v0.24 • Reading Monitoring System for Teachers • Offline macOS App")
+                Text("BULIG ReadTrack v0.25 • Reading Monitoring System for Teachers • Offline macOS App")
             }
         }
     }
