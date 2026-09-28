@@ -33,15 +33,17 @@ struct AssessmentEntry: Codable, Equatable {
     var result = ""
     var overrideLevel = ""
     var note = ""
+    var effectiveDate = ""
 
     enum CodingKeys: String, CodingKey {
-        case result, overrideLevel, note
+        case result, overrideLevel, note, effectiveDate
     }
 
-    init(result: String = "", overrideLevel: String = "", note: String = "") {
+    init(result: String = "", overrideLevel: String = "", note: String = "", effectiveDate: String = "") {
         self.result = result
         self.overrideLevel = overrideLevel
         self.note = note
+        self.effectiveDate = effectiveDate
     }
 
     init(from decoder: Decoder) throws {
@@ -49,6 +51,7 @@ struct AssessmentEntry: Codable, Equatable {
         result = try c.decodeIfPresent(String.self, forKey: .result) ?? ""
         overrideLevel = try c.decodeIfPresent(String.self, forKey: .overrideLevel) ?? ""
         note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
+        effectiveDate = try c.decodeIfPresent(String.self, forKey: .effectiveDate) ?? ""
     }
 }
 
@@ -65,9 +68,10 @@ struct Learner: Identifiable, Codable, Equatable {
     var pre = PreAssessment()
     var preHistory: [String: PreAssessment] = [:]
     var assessments: [String: AssessmentEntry] = [:]
+    var reactivationAPs: [String] = []
 
     enum CodingKeys: String, CodingKey {
-        case id, lrn, fullName, firstName, middleInitial, lastName, nameExtension, sex, dateOfBirth, pre, preHistory, assessments
+        case id, lrn, fullName, firstName, middleInitial, lastName, nameExtension, sex, dateOfBirth, pre, preHistory, assessments, reactivationAPs
     }
 
     init(
@@ -82,7 +86,8 @@ struct Learner: Identifiable, Codable, Equatable {
         dateOfBirth: String = "",
         pre: PreAssessment = PreAssessment(),
         preHistory: [String: PreAssessment] = [:],
-        assessments: [String: AssessmentEntry] = [:]
+        assessments: [String: AssessmentEntry] = [:],
+        reactivationAPs: [String] = []
     ) {
         self.id = id
         self.lrn = lrn
@@ -96,6 +101,7 @@ struct Learner: Identifiable, Codable, Equatable {
         self.pre = pre
         self.preHistory = preHistory
         self.assessments = assessments
+        self.reactivationAPs = reactivationAPs
     }
 
     init(from decoder: Decoder) throws {
@@ -112,6 +118,7 @@ struct Learner: Identifiable, Codable, Equatable {
         pre = try c.decodeIfPresent(PreAssessment.self, forKey: .pre) ?? PreAssessment()
         preHistory = try c.decodeIfPresent([String: PreAssessment].self, forKey: .preHistory) ?? [:]
         assessments = try c.decodeIfPresent([String: AssessmentEntry].self, forKey: .assessments) ?? [:]
+        reactivationAPs = try c.decodeIfPresent([String].self, forKey: .reactivationAPs) ?? []
     }
 
     var displayName: String {
@@ -134,6 +141,20 @@ struct AppData: Codable, Equatable {
     var assessmentTerms: [String: String] = ["PRETEST": "1ST"]
         .merging(Dictionary(uniqueKeysWithValues: (1...15).map { ("AP\($0)", "1ST") })) { current, _ in current }
     var learners: [Learner] = []
+}
+
+struct RestorePointInfo: Identifiable {
+    let id: String
+    let url: URL
+    let title: String
+    let date: Date
+}
+
+struct SchoolYearArchiveInfo: Identifiable {
+    let id: String
+    let url: URL
+    let schoolYear: String
+    let date: Date
 }
 
 struct ReadingLevel: Identifiable, Hashable {
@@ -1065,9 +1086,15 @@ final class AppStore: ObservableObject {
     @Published var data = AppData()
     @Published var selectedAP = "AP1"
     @Published var statusMessage = "Ready"
+    @Published var assessmentLocks: [String: Bool] = [:]
     private let appName = "BULIG RMS Teacher"
 
-    init() { load(); migrateLearnerNameFields(); migratePreAssessmentHistory() }
+    init() {
+        load()
+        loadAssessmentLocks()
+        migrateLearnerNameFields()
+        migratePreAssessmentHistory()
+    }
 
     private var supportFolder: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -1077,6 +1104,213 @@ final class AppStore: ObservableObject {
     }
 
     private var dataURL: URL { supportFolder.appendingPathComponent("data.json") }
+
+    private var locksURL: URL { supportFolder.appendingPathComponent("assessment-locks.json") }
+
+    private var restoreFolder: URL {
+        let folder = supportFolder.appendingPathComponent("Restore Points", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    private var archiveFolder: URL {
+        let folder = supportFolder.appendingPathComponent("School Year Archives", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    private func safeFilePart(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        return value.unicodeScalars.map { allowed.contains($0) ? String($0) : "_" }.joined()
+    }
+
+    private func fileTimestamp(_ date: Date = Date()) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter.string(from: date)
+    }
+
+    private func loadAssessmentLocks() {
+        guard let raw = try? Data(contentsOf: locksURL),
+              let decoded = try? JSONDecoder().decode([String: Bool].self, from: raw) else {
+            assessmentLocks = [:]
+            return
+        }
+        assessmentLocks = decoded
+    }
+
+    private func saveAssessmentLocks() {
+        if let raw = try? JSONEncoder.pretty.encode(assessmentLocks) {
+            try? raw.write(to: locksURL, options: .atomic)
+        }
+    }
+
+    func isAssessmentLocked(_ ap: String) -> Bool {
+        assessmentLocks[ap] == true
+    }
+
+    func setAssessmentLocked(_ ap: String, locked: Bool) {
+        createRestorePoint(reason: locked ? "Before finalizing \(ap)" : "Before unlocking \(ap)")
+        assessmentLocks[ap] = locked
+        saveAssessmentLocks()
+        statusMessage = locked ? "\(ap) finalized and locked" : "\(ap) unlocked"
+    }
+
+    func createRestorePoint(reason: String) {
+        do {
+            let raw = try JSONEncoder.pretty.encode(data)
+            let name = "\(fileTimestamp())_\(safeFilePart(reason)).json"
+            let url = restoreFolder.appendingPathComponent(name)
+            try raw.write(to: url, options: .atomic)
+
+            let files = (try? FileManager.default.contentsOfDirectory(
+                at: restoreFolder,
+                includingPropertiesForKeys: [.creationDateKey],
+                options: [.skipsHiddenFiles]
+            )) ?? []
+
+            let sorted = files.sorted {
+                let l = (try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+                let r = (try? $1.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+                return l > r
+            }
+            if sorted.count > 10 {
+                for old in sorted.dropFirst(10) {
+                    try? FileManager.default.removeItem(at: old)
+                }
+            }
+        } catch {
+            statusMessage = "Restore point could not be created"
+        }
+    }
+
+    func restorePoints() -> [RestorePointInfo] {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: restoreFolder,
+            includingPropertiesForKeys: [.creationDateKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        return files.compactMap { url in
+            guard url.pathExtension.lowercased() == "json" else { return nil }
+            let date = (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            let raw = url.deletingPathExtension().lastPathComponent
+            let pieces = raw.split(separator: "_", maxSplits: 1).map(String.init)
+            let title = pieces.count > 1 ? pieces[1].replacingOccurrences(of: "_", with: " ") : "Restore Point"
+            return RestorePointInfo(id: url.path, url: url, title: title, date: date)
+        }
+        .sorted { $0.date > $1.date }
+    }
+
+    func restoreFromPoint(_ point: RestorePointInfo) {
+        do {
+            let decoded = try JSONDecoder().decode(AppData.self, from: Data(contentsOf: point.url))
+            createRestorePoint(reason: "Before restoring older version")
+            data = decoded
+            save()
+            statusMessage = "Restore point loaded"
+        } catch {
+            statusMessage = "Restore point is invalid"
+        }
+    }
+
+    func schoolYearArchives() -> [SchoolYearArchiveInfo] {
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: archiveFolder,
+            includingPropertiesForKeys: [.creationDateKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        return files.compactMap { url in
+            guard url.pathExtension.lowercased() == "json" else { return nil }
+            let date = (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            let base = url.deletingPathExtension().lastPathComponent
+            let year = base.components(separatedBy: "__").first ?? base
+            return SchoolYearArchiveInfo(id: url.path, url: url, schoolYear: year, date: date)
+        }
+        .sorted { $0.date > $1.date }
+    }
+
+    func archiveAndStartNewSchoolYear(_ newSchoolYear: String) -> String {
+        let cleaned = newSchoolYear.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return "Enter the new school year first." }
+
+        do {
+            createRestorePoint(reason: "Before starting school year \(cleaned)")
+            let currentYear = data.settings.schoolYear.isEmpty ? "Unspecified" : data.settings.schoolYear
+            let archiveURL = archiveFolder.appendingPathComponent(
+                "\(safeFilePart(currentYear))__\(fileTimestamp()).json"
+            )
+            try JSONEncoder.pretty.encode(data).write(to: archiveURL, options: .atomic)
+
+            var newData = AppData()
+            newData.settings = data.settings
+            newData.settings.schoolYear = cleaned
+            newData.settings.gradeLevel = ""
+            newData.settings.section = ""
+            newData.settings.adviser = ""
+            newData.assessmentTerms = ["PRETEST": "1ST"]
+                .merging(Dictionary(uniqueKeysWithValues: (1...15).map { ("AP\($0)", "1ST") })) { current, _ in current }
+            newData.learners = []
+
+            data = newData
+            assessmentLocks = [:]
+            saveAssessmentLocks()
+            save()
+            return "School year \(currentYear) was archived. BULIG is ready for \(cleaned)."
+        } catch {
+            return "The new school year could not be started."
+        }
+    }
+
+    func openSchoolYearArchive(_ archive: SchoolYearArchiveInfo) {
+        do {
+            createRestorePoint(reason: "Before opening archived school year")
+            let decoded = try JSONDecoder().decode(AppData.self, from: Data(contentsOf: archive.url))
+            data = decoded
+            assessmentLocks = [:]
+            saveAssessmentLocks()
+            save()
+            statusMessage = "Opened archived school year \(archive.schoolYear)"
+        } catch {
+            statusMessage = "Archive could not be opened"
+        }
+    }
+
+    func removeLearner(_ learnerID: UUID) {
+        guard let index = data.learners.firstIndex(where: { $0.id == learnerID }) else { return }
+        createRestorePoint(reason: "Before removing learner")
+        data.learners.remove(at: index)
+        save()
+    }
+
+    func reactivateLearner(_ learnerID: UUID, at ap: String) {
+        guard let index = data.learners.firstIndex(where: { $0.id == learnerID }) else { return }
+        createRestorePoint(reason: "Before reactivating learner")
+        if !data.learners[index].reactivationAPs.contains(ap) {
+            data.learners[index].reactivationAPs.append(ap)
+        }
+        save()
+    }
+
+    func setInactiveDetails(learnerID: UUID, ap: String, note: String, effectiveDate: String) {
+        guard let index = data.learners.firstIndex(where: { $0.id == learnerID }),
+              var entry = data.learners[index].assessments[ap] else { return }
+        entry.note = note
+        entry.effectiveDate = effectiveDate
+        data.learners[index].assessments[ap] = entry
+        save()
+    }
+
+    func completedReportStages() -> [String] {
+        var stages = ["PRETEST"]
+        for ap in assessmentPeriods {
+            if data.learners.contains(where: { !($0.assessments[ap]?.result ?? "").isEmpty }) {
+                stages.append(ap)
+            }
+        }
+        return stages
+    }
 
     private func logoURL(fileName: String?) -> URL? {
         guard let fileName, !fileName.isEmpty else { return nil }
@@ -1311,14 +1545,27 @@ final class AppStore: ObservableObject {
     }
 
     func inactiveStatusBeforeAP(_ learner: Learner, ap: String) -> (period: String, status: String)? {
-        guard let target = assessmentPeriods.firstIndex(of: ap), target > 0 else { return nil }
+        guard let target = assessmentPeriods.firstIndex(of: ap) else { return nil }
+
+        var latestInactive: (index: Int, period: String, status: String)? = nil
         for i in 0..<target {
             let key = assessmentPeriods[i]
             if let entry = learner.assessments[key], isInactiveStatus(entry.result) {
-                return (key, entry.result)
+                latestInactive = (i, key, entry.result)
             }
         }
-        return nil
+
+        guard let inactive = latestInactive else { return nil }
+
+        let latestReactivation = learner.reactivationAPs.compactMap { key -> Int? in
+            guard let index = assessmentPeriods.firstIndex(of: key), index <= target else { return nil }
+            return index
+        }.max()
+
+        if let latestReactivation, latestReactivation > inactive.index {
+            return nil
+        }
+        return (inactive.period, inactive.status)
     }
 
     func levelBeforeAP(_ learner: Learner, ap: String) -> String {
@@ -1326,11 +1573,20 @@ final class AppStore: ObservableObject {
         guard !level.isEmpty else { return "" }
         guard let target = assessmentPeriods.firstIndex(of: ap), target > 0 else { return level }
 
+        var inactive = false
         for i in 0..<target {
             let key = assessmentPeriods[i]
+            if learner.reactivationAPs.contains(key) {
+                inactive = false
+            }
+
             guard let entry = learner.assessments[key] else { continue }
+            if inactive { continue }
+
             level = appliedLevel(for: entry, from: level)
-            if isInactiveStatus(entry.result) { break }
+            if isInactiveStatus(entry.result) {
+                inactive = true
+            }
         }
         return level
     }
@@ -1346,11 +1602,19 @@ final class AppStore: ObservableObject {
         var level = preAssessment(for: learner).level
         guard !level.isEmpty else { return "" }
 
+        var inactive = false
         for key in assessmentPeriods {
-            if let entry = learner.assessments[key] {
-                level = appliedLevel(for: entry, from: level)
-                if isInactiveStatus(entry.result) { break }
+            if learner.reactivationAPs.contains(key) {
+                inactive = false
             }
+
+            if let entry = learner.assessments[key], !inactive {
+                level = appliedLevel(for: entry, from: level)
+                if isInactiveStatus(entry.result) {
+                    inactive = true
+                }
+            }
+
             if key == ap { break }
         }
         return level
@@ -1466,6 +1730,7 @@ final class AppStore: ObservableObject {
     func importFromClipboard() -> Int {
         guard let text = NSPasteboard.general.string(forType: .string),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return 0 }
+        createRestorePoint(reason: "Before clipboard SF1 import")
         var added = 0
         for rawLine in text.components(separatedBy: .newlines) {
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1616,6 +1881,7 @@ final class AppStore: ObservableObject {
                 throw SF1ImportError.noSF1Sheet
             }
 
+            createRestorePoint(reason: "Before SF1 import")
             var foundCount = 0
             var importedCount = 0
             var duplicateCount = 0
@@ -1713,6 +1979,7 @@ final class AppStore: ObservableObject {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
+            createRestorePoint(reason: "Before restoring backup")
             let decoded = try JSONDecoder().decode(AppData.self, from: Data(contentsOf: url))
             data = decoded
             save()
@@ -2109,6 +2376,35 @@ final class AppStore: ObservableObject {
         } catch {
             statusMessage = "PDF save failed"
         }
+    }
+
+    func exportAllReports() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Folder for BULIG Reports"
+        panel.message = "BULIG will create both official PDF reports for PRETEST and every AP with encoded data."
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+
+        var saved = 0
+        for stage in completedReportStages() {
+            for type in PrintoutType.allCases {
+                let view = nativeReportView(stage: stage, type: type)
+                guard let pdf = view.pdfData() else { continue }
+                let name = type == .classroomMonitoring
+                    ? "\(stage)_Classroom_Reading_Monitoring_Report.pdf"
+                    : "\(stage)_List_of_Pupils.pdf"
+                do {
+                    try pdf.write(to: folder.appendingPathComponent(name), options: .atomic)
+                    saved += 1
+                } catch { }
+            }
+        }
+        statusMessage = "Batch export saved \(saved) PDF report(s)"
+        NSWorkspace.shared.open(folder)
     }
 
     func exportCSV(stage: String) {
