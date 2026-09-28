@@ -3120,59 +3120,173 @@ struct DashboardView: View {
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: 12) {
-                    DashboardMetricCard(
-                        title: "Total Learners",
-                        value: "\(store.data.learners.count)",
-                        symbol: "person.2.fill",
-                        tint: .blue
-                    )
-                    DashboardMetricCard(
-                        title: "Male",
-                        value: "\(store.data.learners.filter { $0.sex == "Male" }.count)",
-                        symbol: "person.fill",
-                        tint: .indigo
-                    )
-                    DashboardMetricCard(
-                        title: "Female",
-                        value: "\(store.data.learners.filter { $0.sex == "Female" }.count)",
-                        symbol: "person.fill",
-                        tint: .purple
-                    )
-                    DashboardMetricCard(
-                        title: "Active Learners",
-                        value: "\(activeCount)",
-                        symbol: "person.crop.circle.badge.checkmark",
-                        tint: .green
-                    )
+                    Button {
+                        openDrilldown("Total Learners", learners: store.data.learners)
+                    } label: {
+                        DashboardMetricCard(
+                            title: "Total Learners",
+                            value: "\(store.data.learners.count)",
+                            symbol: "person.2.fill",
+                            tint: .blue
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        openDrilldown("Male Learners", learners: store.data.learners.filter { $0.sex == "Male" })
+                    } label: {
+                        DashboardMetricCard(
+                            title: "Male",
+                            value: "\(store.data.learners.filter { $0.sex == "Male" }.count)",
+                            symbol: "person.fill",
+                            tint: .indigo
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        openDrilldown("Female Learners", learners: store.data.learners.filter { $0.sex == "Female" })
+                    } label: {
+                        DashboardMetricCard(
+                            title: "Female",
+                            value: "\(store.data.learners.filter { $0.sex == "Female" }.count)",
+                            symbol: "person.fill",
+                            tint: .purple
+                        )
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        openDrilldown(
+                            "Active Learners – \(selectedStage)",
+                            learners: store.data.learners.filter { inactiveStatus($0, stage: selectedStage) == nil }
+                        )
+                    } label: {
+                        DashboardMetricCard(
+                            title: "Active Learners",
+                            value: "\(activeCount)",
+                            symbol: "person.crop.circle.badge.checkmark",
+                            tint: .green
+                        )
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 if selectedStage != "PRETEST" {
                     HStack(spacing: 12) {
-                        DashboardMetricCard(
-                            title: "Ready",
-                            value: "\(resultCount("READY"))",
-                            symbol: "arrow.up.circle.fill",
-                            tint: .green
-                        )
-                        DashboardMetricCard(
-                            title: "Not Ready",
-                            value: "\(resultCount("NOT READY"))",
-                            symbol: "minus.circle.fill",
-                            tint: .orange
-                        )
-                        DashboardMetricCard(
-                            title: "Reverted",
-                            value: "\(resultCount("REVERTED"))",
-                            symbol: "arrow.down.circle.fill",
-                            tint: .red
-                        )
-                        DashboardMetricCard(
-                            title: "Inactive",
-                            value: "\(inactiveCount)",
-                            symbol: "person.crop.circle.badge.xmark",
-                            tint: .secondary
-                        )
+                        Button {
+                            openDrilldown(
+                                "READY – \(selectedStage)",
+                                learners: store.data.learners.filter { $0.assessments[selectedStage]?.result == "READY" }
+                            )
+                        } label: {
+                            DashboardMetricCard(
+                                title: "Ready",
+                                value: "\(resultCount("READY"))",
+                                symbol: "arrow.up.circle.fill",
+                                tint: .green
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            openDrilldown(
+                                "NOT READY – \(selectedStage)",
+                                learners: store.data.learners.filter { $0.assessments[selectedStage]?.result == "NOT READY" }
+                            )
+                        } label: {
+                            DashboardMetricCard(
+                                title: "Not Ready",
+                                value: "\(resultCount("NOT READY"))",
+                                symbol: "minus.circle.fill",
+                                tint: .orange
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            openDrilldown(
+                                "REVERTED – \(selectedStage)",
+                                learners: store.data.learners.filter { $0.assessments[selectedStage]?.result == "REVERTED" }
+                            )
+                        } label: {
+                            DashboardMetricCard(
+                                title: "Reverted",
+                                value: "\(resultCount("REVERTED"))",
+                                symbol: "arrow.down.circle.fill",
+                                tint: .red
+                            )
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            openDrilldown(
+                                "Inactive – \(selectedStage)",
+                                learners: store.data.learners.filter {
+                                    inactiveStatus($0, stage: selectedStage) != nil ||
+                                    store.isInactiveStatus($0.assessments[selectedStage]?.result ?? "")
+                                }
+                            )
+                        } label: {
+                            DashboardMetricCard(
+                                title: "Inactive",
+                                value: "\(inactiveCount)",
+                                symbol: "person.crop.circle.badge.xmark",
+                                tint: .secondary
+                            )
+                        }
+                        .buttonStyle(.plain)
                     }
+                }
+
+                HStack(alignment: .top, spacing: 16) {
+                    GroupBox("Encoding Status – \(selectedStage)") {
+                        HStack(spacing: 16) {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("\(encodedForSelectedStage.count) / \(requiredForSelectedStage.count)")
+                                    .font(.title2.bold())
+                                    .monospacedDigit()
+                                Text("required learners encoded")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            ProgressView(
+                                value: Double(encodedForSelectedStage.count),
+                                total: Double(max(requiredForSelectedStage.count, 1))
+                            )
+                            .frame(maxWidth: .infinity)
+
+                            Button {
+                                openDrilldown("Missing Encoding – \(selectedStage)", learners: missingForSelectedStage)
+                            } label: {
+                                Label("\(missingForSelectedStage.count) Missing", systemImage: "exclamationmark.circle")
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(missingForSelectedStage.isEmpty)
+                        }
+                        .padding(10)
+                    }
+                    .frame(maxWidth: .infinity)
+
+                    GroupBox("Data Warnings") {
+                        if dashboardWarnings.isEmpty {
+                            Label("No data warnings detected", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(dashboardWarnings, id: \.self) { warning in
+                                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.orange)
+                                }
+                            }
+                            .padding(10)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
                 }
 
                 HStack(alignment: .top, spacing: 16) {
