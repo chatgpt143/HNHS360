@@ -2788,6 +2788,8 @@ struct DashboardView: View {
     @State private var selectedStage = "PRETEST"
     @State private var selectedProfilePeriod = "BOSY"
     @State private var selectedLevel: String? = nil
+    @State private var drilldownTitle = ""
+    @State private var drilldownLearnerIDs: [UUID] = []
 
     private var stageOptions: [String] { ["PRETEST"] + assessmentPeriods }
 
@@ -2976,6 +2978,110 @@ struct DashboardView: View {
         guard let selectedLevel else { return [] }
         return store.data.learners
             .filter { stageLevel($0, stage: selectedStage) == selectedLevel }
+            .sorted { $0.displayName < $1.displayName }
+    }
+
+    private var requiredForSelectedStage: [Learner] {
+        if selectedStage == "PRETEST" { return store.data.learners }
+        return store.data.learners.filter {
+            store.inactiveStatusBeforeAP($0, ap: selectedStage) == nil
+        }
+    }
+
+    private var encodedForSelectedStage: [Learner] {
+        if selectedStage == "PRETEST" {
+            return requiredForSelectedStage.filter { !store.preAssessment(for: $0).level.isEmpty }
+        }
+        return requiredForSelectedStage.filter {
+            !($0.assessments[selectedStage]?.result ?? "").isEmpty
+        }
+    }
+
+    private var missingForSelectedStage: [Learner] {
+        requiredForSelectedStage.filter { learner in
+            if selectedStage == "PRETEST" {
+                return store.preAssessment(for: learner).level.isEmpty
+            }
+            return (learner.assessments[selectedStage]?.result ?? "").isEmpty
+        }
+    }
+
+    private var dashboardWarnings: [String] {
+        var warnings: [String] = []
+
+        let lrns = store.data.learners.map { $0.lrn }.filter { !$0.isEmpty }
+        let duplicates = Dictionary(grouping: lrns, by: { $0 }).filter { $0.value.count > 1 }
+        if !duplicates.isEmpty {
+            warnings.append("\(duplicates.count) duplicate LRN value(s) detected")
+        }
+
+        let invalidLRN = store.data.learners.filter {
+            !$0.lrn.isEmpty && $0.lrn.filter(\.isNumber).count != 12
+        }.count
+        if invalidLRN > 0 {
+            warnings.append("\(invalidLRN) learner(s) have an invalid LRN length")
+        }
+
+        let missingSex = store.data.learners.filter { $0.sex.isEmpty }.count
+        if missingSex > 0 {
+            warnings.append("\(missingSex) learner(s) have no sex encoded")
+        }
+
+        let missingPre = store.data.learners.filter {
+            store.preAssessment(for: $0).level.isEmpty
+        }.count
+        if missingPre > 0 {
+            warnings.append("\(missingPre) learner(s) have no Pre-Assessment reading level")
+        }
+
+        let manual = store.data.learners.filter { learner in
+            learner.assessments.values.contains { !$0.overrideLevel.isEmpty }
+        }.count
+        if manual > 0 {
+            warnings.append("\(manual) learner(s) have manual reading-level adjustments")
+        }
+
+        if !missingForSelectedStage.isEmpty {
+            warnings.append("\(missingForSelectedStage.count) required learner(s) are not yet encoded in \(selectedStage)")
+        }
+
+        var laterAfterInactive = 0
+        for learner in store.data.learners {
+            var inactiveIndex: Int? = nil
+            for (index, ap) in assessmentPeriods.enumerated() {
+                if let entry = learner.assessments[ap], store.isInactiveStatus(entry.result) {
+                    inactiveIndex = index
+                } else if let inactiveIndex,
+                          index > inactiveIndex,
+                          let entry = learner.assessments[ap],
+                          !entry.result.isEmpty,
+                          !store.isInactiveStatus(entry.result) {
+                    let hasReactivation = learner.reactivationAPs.contains { key in
+                        guard let reactIndex = assessmentPeriods.firstIndex(of: key) else { return false }
+                        return reactIndex > inactiveIndex && reactIndex <= index
+                    }
+                    if !hasReactivation {
+                        laterAfterInactive += 1
+                        break
+                    }
+                }
+            }
+        }
+        if laterAfterInactive > 0 {
+            warnings.append("\(laterAfterInactive) learner(s) have assessment data after an inactive status without reactivation")
+        }
+
+        return warnings
+    }
+
+    private func openDrilldown(_ title: String, learners: [Learner]) {
+        drilldownTitle = title
+        drilldownLearnerIDs = learners.map(\.id)
+    }
+
+    private var drilldownLearners: [Learner] {
+        store.data.learners
+            .filter { drilldownLearnerIDs.contains($0.id) }
             .sorted { $0.displayName < $1.displayName }
     }
 
