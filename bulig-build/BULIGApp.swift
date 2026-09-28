@@ -431,64 +431,74 @@ final class NativeReportView: NSView {
         let w = paperSize.width - leftMargin - rightMargin
         var y = pageOriginY + topMargin
 
-        let brandH: CGFloat = 48
+        // Match the Excel template: Department of Education is centered
+        // independently across the printable page. Logos sit below it on
+        // the left and right and never shift the center headings.
+        drawText(
+            "Department of Education",
+            in: NSRect(x: x, y: y, width: w, height: 17),
+            size: 12,
+            alignment: .center
+        )
+        y += 18
+
+        let landscape = paperSize.width > paperSize.height
+        let logoBandH: CGFloat = landscape ? 74 : 68
+        let sealSize: CGFloat = landscape ? 78 : 68
+        let buligW: CGFloat = landscape ? 190 : 150
+        let buligH: CGFloat = landscape ? 72 : 58
+
         drawImage(
             resource: "DepEdBukidnonSeal",
             ext: "jpg",
-            in: NSRect(x: x, y: y, width: 62, height: brandH)
-        )
-
-        let agencyX = x + 68
-        let logoW: CGFloat = min(160, w * 0.32)
-        let agencyW = max(140, w - 68 - logoW - 8)
-        let agency = [
-            "Department of Education",
-            snapshot.settings.region,
-            snapshot.settings.division,
-            snapshot.settings.schoolName
-        ].filter { !$0.isEmpty }.joined(separator: "\n")
-        drawText(
-            agency,
-            in: NSRect(x: agencyX, y: y, width: agencyW, height: brandH),
-            size: 10.5,
-            alignment: .center
+            in: NSRect(
+                x: x + (landscape ? 18 : 8),
+                y: y + (logoBandH - sealSize) / 2,
+                width: sealSize,
+                height: sealSize
+            )
         )
 
         drawImage(
             resource: "ReportBuligLogo",
             ext: "jpg",
-            in: NSRect(x: x + w - logoW, y: y, width: logoW, height: brandH)
+            in: NSRect(
+                x: x + w - buligW - (landscape ? 10 : 2),
+                y: y + (logoBandH - buligH) / 2,
+                width: buligW,
+                height: buligH
+            )
         )
-        y += brandH
+        y += logoBandH
 
         drawText(
             "BUKIDNON'S UNIFIED LITERACY AND INTERVENTION GATEWAY",
-            in: NSRect(x: x, y: y, width: w, height: 14),
-            size: 11.5,
+            in: NSRect(x: x, y: y, width: w, height: 16),
+            size: landscape ? 12 : 10.5,
             bold: true,
             alignment: .center
         )
-        y += 14
+        y += 16
 
         drawText(
             "Building Up Literacy, Inspiring Growth",
-            in: NSRect(x: x, y: y, width: w, height: 14),
-            size: 11.5,
+            in: NSRect(x: x, y: y, width: w, height: 15),
+            size: landscape ? 11.5 : 10.5,
             bold: true,
             alignment: .center
         )
-        y += 14
+        y += 15
 
         drawText(
             title,
-            in: NSRect(x: x, y: y, width: w, height: 20),
-            size: 15,
+            in: NSRect(x: x, y: y, width: w, height: 22),
+            size: landscape ? 15 : 14,
             bold: true,
             alignment: .center
         )
-        y += 22
+        y += 25
 
-        let rowH: CGFloat = 22
+        let rowH: CGFloat = landscape ? 22 : 24
         let widths = [w * 0.18, w * 0.32, w * 0.20, w * 0.30]
         let rows: [[String]] = [
             ["Adviser", snapshot.settings.adviser, "ASSESSMENT\nPERIOD", snapshot.stage],
@@ -513,6 +523,7 @@ final class NativeReportView: NSView {
             }
             y += rowH
         }
+
         return y
     }
 
@@ -2960,7 +2971,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.17 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.18 • Offline macOS App")
             }
         }
     }
