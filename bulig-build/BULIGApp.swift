@@ -2872,12 +2872,18 @@ struct DashboardView: View {
 
                     GroupBox("Learners Needing Attention") {
                         if attentionItems.isEmpty {
-                            ContentUnavailableView(
-                                "No Attention Flags",
-                                systemImage: "checkmark.circle",
-                                description: Text("No learners currently meet the dashboard attention rules for \(selectedStage).")
-                            )
-                            .frame(minHeight: 180)
+                            VStack(spacing: 10) {
+                                Image(systemName: "checkmark.circle")
+                                    .font(.system(size: 34))
+                                    .foregroundStyle(.green)
+                                Text("No Attention Flags")
+                                    .font(.headline)
+                                Text("No learners currently meet the dashboard attention rules for \(selectedStage).")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 180)
                         } else {
                             VStack(spacing: 0) {
                                 HStack {
