@@ -4413,7 +4413,7 @@ struct MonitoringView: View {
                         systemImage: isLocked ? "lock.open.fill" : "lock.fill"
                     )
                 }
-                .buttonStyle(isLocked ? .bordered : .borderedProminent)
+                .buttonStyle(.borderedProminent)
             }
 
             HStack(spacing: 14) {
@@ -5094,7 +5094,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.22 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.23 • Offline macOS App")
             }
         }
     }
