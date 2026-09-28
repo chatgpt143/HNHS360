@@ -3989,6 +3989,7 @@ struct PreAssessmentView: View {
     }
 }
 
+
 struct MonitoringView: View {
     @ObservedObject var store: AppStore
 
@@ -3996,6 +3997,54 @@ struct MonitoringView: View {
     @State private var manualLevel = ""
     @State private var manualNote = ""
     @State private var showOverrideConfirmation = false
+    @State private var searchText = ""
+    @State private var statusFilter = "All"
+    @State private var showLockConfirmation = false
+
+    private var isLocked: Bool {
+        store.isAssessmentLocked(store.selectedAP)
+    }
+
+    private var requiredLearners: [Learner] {
+        store.data.learners.filter { learner in
+            store.inactiveStatusBeforeAP(learner, ap: store.selectedAP) == nil
+        }
+    }
+
+    private var encodedCount: Int {
+        requiredLearners.filter { learner in
+            !(learner.assessments[store.selectedAP]?.result ?? "").isEmpty
+        }.count
+    }
+
+    private var missingCount: Int {
+        max(0, requiredLearners.count - encodedCount)
+    }
+
+    private var filteredLearners: [Learner] {
+        store.data.learners.filter { learner in
+            let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let matchesSearch = query.isEmpty ||
+                learner.displayName.lowercased().contains(query) ||
+                learner.lrn.lowercased().contains(query)
+
+            let entryResult = learner.assessments[store.selectedAP]?.result ?? ""
+            let inactivePrior = store.inactiveStatusBeforeAP(learner, ap: store.selectedAP)
+
+            let matchesStatus: Bool
+            switch statusFilter {
+            case "Missing":
+                matchesStatus = inactivePrior == nil && entryResult.isEmpty
+            case "Inactive":
+                matchesStatus = inactivePrior != nil || store.isInactiveStatus(entryResult)
+            case "All":
+                matchesStatus = true
+            default:
+                matchesStatus = entryResult == statusFilter
+            }
+            return matchesSearch && matchesStatus
+        }
+    }
 
     func resultBinding(for learnerID: UUID) -> Binding<String> {
         Binding(
@@ -4004,10 +4053,52 @@ struct MonitoringView: View {
                     .assessments[store.selectedAP]?.result ?? ""
             },
             set: { newValue in
-                guard let index = store.data.learners.firstIndex(where: { $0.id == learnerID }) else { return }
-                // Selecting/changing a status restores the normal automatic rule.
-                // A special level is applied only when the teacher deliberately uses Edit Level.
-                store.data.learners[index].assessments[store.selectedAP] = AssessmentEntry(result: newValue)
+                guard !isLocked,
+                      let index = store.data.learners.firstIndex(where: { $0.id == learnerID }) else { return }
+
+                var entry = store.data.learners[index].assessments[store.selectedAP] ?? AssessmentEntry()
+                entry.result = newValue
+                entry.overrideLevel = ""
+
+                if !store.isInactiveStatus(newValue) {
+                    entry.effectiveDate = ""
+                }
+
+                store.data.learners[index].assessments[store.selectedAP] = entry
+                store.save()
+            }
+        )
+    }
+
+    private func noteBinding(for learnerID: UUID) -> Binding<String> {
+        Binding(
+            get: {
+                store.data.learners.first(where: { $0.id == learnerID })?
+                    .assessments[store.selectedAP]?.note ?? ""
+            },
+            set: { value in
+                guard !isLocked,
+                      let index = store.data.learners.firstIndex(where: { $0.id == learnerID }),
+                      var entry = store.data.learners[index].assessments[store.selectedAP] else { return }
+                entry.note = value
+                store.data.learners[index].assessments[store.selectedAP] = entry
+                store.save()
+            }
+        )
+    }
+
+    private func effectiveDateBinding(for learnerID: UUID) -> Binding<String> {
+        Binding(
+            get: {
+                store.data.learners.first(where: { $0.id == learnerID })?
+                    .assessments[store.selectedAP]?.effectiveDate ?? ""
+            },
+            set: { value in
+                guard !isLocked,
+                      let index = store.data.learners.firstIndex(where: { $0.id == learnerID }),
+                      var entry = store.data.learners[index].assessments[store.selectedAP] else { return }
+                entry.effectiveDate = value
+                store.data.learners[index].assessments[store.selectedAP] = entry
                 store.save()
             }
         )
@@ -4019,13 +4110,15 @@ struct MonitoringView: View {
     }
 
     private func beginLevelEdit(_ learner: Learner) {
+        guard !isLocked else { return }
         editingLearnerID = learner.id
         manualLevel = store.levelAfterAP(learner, ap: store.selectedAP)
         manualNote = learner.assessments[store.selectedAP]?.note ?? ""
     }
 
     private func saveManualLevel() {
-        guard let learner = editingLearner,
+        guard !isLocked,
+              let learner = editingLearner,
               let index = store.data.learners.firstIndex(where: { $0.id == learner.id }),
               !manualLevel.isEmpty else { return }
 
@@ -4039,10 +4132,10 @@ struct MonitoringView: View {
     }
 
     private func clearManualOverride(_ learner: Learner) {
-        guard let index = store.data.learners.firstIndex(where: { $0.id == learner.id }),
+        guard !isLocked,
+              let index = store.data.learners.firstIndex(where: { $0.id == learner.id }),
               var entry = store.data.learners[index].assessments[store.selectedAP] else { return }
         entry.overrideLevel = ""
-        entry.note = ""
         store.data.learners[index].assessments[store.selectedAP] = entry
         store.save()
     }
@@ -4057,8 +4150,20 @@ struct MonitoringView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            PageHeader(title: "Monitoring", subtitle: "AP1–AP15 reading progression")
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top) {
+                PageHeader(title: "Monitoring", subtitle: "AP1–AP15 reading progression")
+                Spacer()
+                Button {
+                    showLockConfirmation = true
+                } label: {
+                    Label(
+                        isLocked ? "Unlock \(store.selectedAP)" : "Finalize \(store.selectedAP)",
+                        systemImage: isLocked ? "lock.open.fill" : "lock.fill"
+                    )
+                }
+                .buttonStyle(isLocked ? .bordered : .borderedProminent)
+            }
 
             HStack(spacing: 14) {
                 Picker("Assessment Period", selection: $store.selectedAP) {
@@ -4068,11 +4173,82 @@ struct MonitoringView: View {
 
                 Picker("Term", selection: Binding(
                     get: { store.data.assessmentTerms[store.selectedAP] ?? "1ST" },
-                    set: { store.data.assessmentTerms[store.selectedAP] = $0; store.save() }
+                    set: {
+                        guard !isLocked else { return }
+                        store.data.assessmentTerms[store.selectedAP] = $0
+                        store.save()
+                    }
                 )) {
                     ForEach(terms, id: \.self) { Text($0).tag($0) }
                 }
                 .frame(width: 150)
+                .disabled(isLocked)
+
+                Spacer()
+
+                if isLocked {
+                    Label("FINALIZED", systemImage: "lock.fill")
+                        .font(.caption.bold())
+                        .foregroundStyle(.green)
+                }
+            }
+
+            HStack(spacing: 12) {
+                DashboardMetricCard(
+                    title: "Required",
+                    value: "\(requiredLearners.count)",
+                    symbol: "person.2.fill",
+                    tint: .blue
+                )
+                DashboardMetricCard(
+                    title: "Encoded",
+                    value: "\(encodedCount)",
+                    symbol: "checkmark.circle.fill",
+                    tint: .green
+                )
+                DashboardMetricCard(
+                    title: "Missing",
+                    value: "\(missingCount)",
+                    symbol: "exclamationmark.circle.fill",
+                    tint: missingCount == 0 ? .green : .orange
+                )
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Encoding Progress")
+                        .font(.caption.bold())
+                    ProgressView(value: Double(encodedCount), total: Double(max(requiredLearners.count, 1)))
+                    Text("\(encodedCount) of \(requiredLearners.count) required learners encoded")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+
+            HStack(spacing: 12) {
+                TextField("Search learner name or LRN", text: $searchText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 360)
+
+                Picker("Filter", selection: $statusFilter) {
+                    Text("All").tag("All")
+                    Text("Missing").tag("Missing")
+                    Divider()
+                    Text("READY").tag("READY")
+                    Text("NOT READY").tag("NOT READY")
+                    Text("REVERTED").tag("REVERTED")
+                    Text("Inactive").tag("Inactive")
+                    Text("NLS").tag("NLS")
+                    Text("NLP").tag("NLP")
+                    Text("TRANSFER OUT").tag("TRANSFER OUT")
+                }
+                .frame(width: 190)
+
+                Text("\(filteredLearners.count) shown")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 Spacer()
 
@@ -4081,17 +4257,8 @@ struct MonitoringView: View {
                     .foregroundStyle(.secondary)
             }
 
-            HStack(spacing: 16) {
-                Label("NLS: No Longer in School", systemImage: "person.crop.circle.badge.xmark")
-                Label("NLP: No Longer Participating", systemImage: "person.crop.circle.badge.minus")
-                Label("Transfer Out", systemImage: "arrow.right.square")
-                Spacer()
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-
             List {
-                ForEach(store.data.learners) { learner in
+                ForEach(filteredLearners) { learner in
                     let inactive = store.inactiveStatusBeforeAP(learner, ap: store.selectedAP)
                     let entry = learner.assessments[store.selectedAP]
                     let previous = store.levelBeforeAP(learner, ap: store.selectedAP)
@@ -4100,9 +4267,14 @@ struct MonitoringView: View {
 
                     VStack(alignment: .leading, spacing: 7) {
                         HStack(spacing: 12) {
-                            Text(learner.displayName.isEmpty ? "Unnamed learner" : learner.displayName)
-                                .frame(minWidth: 225, alignment: .leading)
-                                .bold()
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(learner.displayName.isEmpty ? "Unnamed learner" : learner.displayName)
+                                    .bold()
+                                Text(learner.lrn)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(minWidth: 225, alignment: .leading)
 
                             VStack(alignment: .leading) {
                                 Text("Previous").font(.caption2).foregroundStyle(.secondary)
@@ -4113,13 +4285,20 @@ struct MonitoringView: View {
 
                             if let inactive {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(statusLabel(inactive.status))
-                                        .bold()
+                                    Text(statusLabel(inactive.status)).bold()
                                     Text("Inactive since \(inactive.period)")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                 }
-                                .frame(minWidth: 235, alignment: .leading)
+                                .frame(minWidth: 220, alignment: .leading)
+
+                                Button {
+                                    store.reactivateLearner(learner.id, at: store.selectedAP)
+                                } label: {
+                                    Label("Reactivate", systemImage: "person.crop.circle.badge.checkmark")
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(isLocked)
                             } else {
                                 Picker("Status", selection: resultBinding(for: learner.id)) {
                                     Text("Select Status").tag("")
@@ -4131,7 +4310,8 @@ struct MonitoringView: View {
                                     Text("NLP – No Longer Participating").tag("NLP")
                                     Text("TRANSFER OUT").tag("TRANSFER OUT")
                                 }
-                                .frame(width: 245)
+                                .frame(width: 230)
+                                .disabled(isLocked)
 
                                 Image(systemName: "arrow.right")
                                     .foregroundStyle(.secondary)
@@ -4152,7 +4332,7 @@ struct MonitoringView: View {
                                         .monospaced()
                                         .bold()
                                 }
-                                .frame(width: 118, alignment: .leading)
+                                .frame(width: 112, alignment: .leading)
 
                                 Button {
                                     beginLevelEdit(learner)
@@ -4161,6 +4341,7 @@ struct MonitoringView: View {
                                 }
                                 .buttonStyle(.bordered)
                                 .disabled(
+                                    isLocked ||
                                     entry?.result.isEmpty != false ||
                                     store.isInactiveStatus(entry?.result ?? "")
                                 )
@@ -4172,6 +4353,7 @@ struct MonitoringView: View {
                                         Image(systemName: "arrow.uturn.backward")
                                     }
                                     .buttonStyle(.borderless)
+                                    .disabled(isLocked)
                                     .help("Restore automatic level")
                                 }
                             }
@@ -4180,14 +4362,33 @@ struct MonitoringView: View {
                         }
 
                         if let entry, store.isInactiveStatus(entry.result), inactive == nil {
-                            Text("\(statusLabel(entry.result)) starts in \(store.selectedAP). The learner's last reading level is retained, and succeeding APs will be marked inactive.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .padding(.leading, 342)
+                            HStack(spacing: 10) {
+                                Label("\(statusLabel(entry.result)) starts in \(store.selectedAP)", systemImage: "person.crop.circle.badge.xmark")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+
+                                TextField("Effective date (optional)", text: effectiveDateBinding(for: learner.id))
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 165)
+                                    .disabled(isLocked)
+
+                                TextField("Reason / note (optional)", text: noteBinding(for: learner.id))
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(maxWidth: 320)
+                                    .disabled(isLocked)
+                            }
+                            .padding(.leading, 342)
                         } else if hasOverride, let note = entry?.note, !note.isEmpty {
                             Text("Manual adjustment note: \(note)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                                .padding(.leading, 342)
+                        }
+
+                        if learner.reactivationAPs.contains(store.selectedAP) {
+                            Label("Reactivated in \(store.selectedAP)", systemImage: "person.crop.circle.badge.checkmark")
+                                .font(.caption.bold())
+                                .foregroundStyle(.green)
                                 .padding(.leading, 342)
                         }
                     }
@@ -4248,26 +4449,34 @@ struct MonitoringView: View {
 
                     HStack {
                         Spacer()
-                        Button("Cancel") {
-                            editingLearnerID = nil
-                        }
-                        Button("Apply Manual Level") {
-                            showOverrideConfirmation = true
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(manualLevel.isEmpty)
+                        Button("Cancel") { editingLearnerID = nil }
+                        Button("Apply Manual Level") { showOverrideConfirmation = true }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(manualLevel.isEmpty || isLocked)
                     }
                 }
                 .padding(24)
                 .frame(width: 520, height: 410)
                 .alert("Confirm Manual Level Change", isPresented: $showOverrideConfirmation) {
                     Button("Cancel", role: .cancel) { }
-                    Button("Confirm") {
-                        saveManualLevel()
-                    }
+                    Button("Confirm") { saveManualLevel() }
                 } message: {
                     Text("\(learner.displayName)\n\(previous) → \(manualLevel)\n\nThis overrides the normal automatic progression for \(store.selectedAP).")
                 }
+            }
+        }
+        .alert(isLocked ? "Unlock Assessment Period?" : "Finalize Assessment Period?", isPresented: $showLockConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button(isLocked ? "Unlock" : "Finalize") {
+                store.setAssessmentLocked(store.selectedAP, locked: !isLocked)
+            }
+        } message: {
+            if isLocked {
+                Text("\(store.selectedAP) is currently locked. Unlocking will allow its encoded results to be edited again.")
+            } else if missingCount > 0 {
+                Text("\(store.selectedAP) still has \(missingCount) required learner(s) without an encoded result. You can finalize it, but the missing records will remain visible when you unlock it later.")
+            } else {
+                Text("All required learners are encoded. Finalizing \(store.selectedAP) will lock its term, results, notes, and manual level changes.")
             }
         }
     }
