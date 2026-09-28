@@ -1087,7 +1087,7 @@ final class AppStore: ObservableObject {
     @Published var selectedAP = "AP1"
     @Published var statusMessage = "Ready"
     @Published var assessmentLocks: [String: Bool] = [:]
-    private let appName = "BULIG RMS Teacher"
+    private let storageFolderName = "BULIG RMS Teacher"
 
     init() {
         load()
@@ -1098,7 +1098,7 @@ final class AppStore: ObservableObject {
 
     private var supportFolder: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let folder = base.appendingPathComponent(appName, isDirectory: true)
+        let folder = base.appendingPathComponent(storageFolderName, isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return folder
     }
@@ -2030,7 +2030,7 @@ final class AppStore: ObservableObject {
     func reportText(stage: String) -> String {
         let s = data.settings
         var lines: [String] = []
-        lines.append("BULIG RMS – TEACHER")
+        lines.append("BULIG READTRACK")
         lines.append("Bukidnon's Unified Literacy and Intervention Gateway")
         lines.append("")
         lines.append("School: \(s.schoolName)")
@@ -2512,8 +2512,8 @@ struct BrandView: View {
                 Image(systemName: "book.fill").font(.largeTitle).foregroundStyle(.green)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text("BULIG RMS").font(.title2.bold())
-                Text("Teacher • macOS").font(.caption).foregroundStyle(.secondary)
+                Text("BULIG ReadTrack").font(.title2.bold())
+                Text("Reading Monitoring System for Teachers").font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
         }
@@ -3103,7 +3103,7 @@ struct DashboardView: View {
                     PageHeader(
                         title: "Dashboard",
                         subtitle: store.data.settings.schoolName.isEmpty
-                            ? "Bukidnon's Unified Literacy and Intervention Gateway"
+                            ? "Reading Monitoring System for Teachers"
                             : store.data.settings.schoolName
                     )
 
@@ -5084,9 +5084,9 @@ struct BackupView: View {
 }
 
 @main
-struct BULIGRMSTeacherApp: App {
+struct BULIGReadTrackApp: App {
     var body: some Scene {
-        WindowGroup("BULIG RMS Teacher") {
+        WindowGroup("BULIG ReadTrack") {
             RootView()
         }
         .defaultSize(width: 1280, height: 800)
@@ -5094,7 +5094,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.23 • Offline macOS App")
+                Text("BULIG ReadTrack v0.24 • Reading Monitoring System for Teachers • Offline macOS App")
             }
         }
     }
