@@ -348,6 +348,7 @@ final class NativeReportView: NSView {
         let p = NSMutableParagraphStyle()
         p.alignment = alignment
         p.lineBreakMode = .byWordWrapping
+        p.lineSpacing = -1
         return p
     }
 
@@ -372,10 +373,13 @@ final class NativeReportView: NSView {
             options: options
         )
         let y = verticalCenter ? rect.minY + max(0, (rect.height - measured.height) / 2) : rect.minY
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: rect).addClip()
         str.draw(
-            with: NSRect(x: rect.minX, y: y, width: rect.width, height: max(rect.height, measured.height)),
+            with: NSRect(x: rect.minX, y: y, width: rect.width, height: rect.height),
             options: options
         )
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     private func stroke(_ rect: NSRect, width: CGFloat = 1.0) {
@@ -471,7 +475,7 @@ final class NativeReportView: NSView {
 
         // Complete institutional header. Text remains centered on the page;
         // logo sizes never determine the text center.
-        let bandH: CGFloat = landscape ? 76 : 84
+        let bandH: CGFloat = landscape ? 70 : 84
         let leftBoxW: CGFloat = landscape ? 92 : 78
         let rightBoxW: CGFloat = landscape ? 180 : 130
         let symmetricInset = max(leftBoxW, rightBoxW) + 8
@@ -548,7 +552,7 @@ final class NativeReportView: NSView {
         )
         y += 25
 
-        let rowH: CGFloat = landscape ? 22 : 24
+        let rowH: CGFloat = landscape ? 20 : 24
         let widths = [w * 0.18, w * 0.32, w * 0.20, w * 0.30]
         let rows: [[String]] = [
             ["Adviser", snapshot.settings.adviser, "ASSESSMENT\nPERIOD", snapshot.stage],
@@ -577,6 +581,27 @@ final class NativeReportView: NSView {
         return y
     }
 
+    private func crmAreaLabel(_ area: String) -> String {
+        switch area.uppercased() {
+        case "ORAL LANGUAGE":
+            return "Oral Language"
+        case "PHONOLOGICAL AWARENESS":
+            return "Phonological\nAwareness"
+        case "WORD RECOGNITION":
+            return "Word Recognition"
+        case "FLUENCY":
+            return "Fluency"
+        case "VOCABULARY AND LISTENING COMPREHENSION":
+            return "Vocabulary And\nListening\nComprehension"
+        case "GRADED READING COMPREHENSION":
+            return "Graded Reading\nComprehension"
+        case "GENUINE LOVE FOR READING AND WRITING":
+            return "Genuine Love For\nReading And Writing"
+        default:
+            return area.capitalized
+        }
+    }
+
     private func drawSignatureBlock(
         pageY: CGFloat,
         y requestedY: CGFloat,
@@ -585,7 +610,7 @@ final class NativeReportView: NSView {
         includeDate: Bool
     ) {
         let sigW = (width - 30) / 2
-        let blockHeight: CGFloat = 72
+        let blockHeight: CGFloat = 68
         let maxY = pageY + paperSize.height - bottomMargin - blockHeight
         let y = min(requestedY, maxY)
 
@@ -593,7 +618,7 @@ final class NativeReportView: NSView {
         drawText("Noted by:", in: NSRect(x: x + sigW + 30, y: y, width: sigW, height: 14), size: 10)
 
         // Small blank area specifically reserved for the actual signature.
-        let nameY = y + 34
+        let nameY = y + 31
         drawText(
             snapshot.settings.adviser,
             in: NSRect(x: x, y: nameY, width: sigW, height: 16),
@@ -652,7 +677,7 @@ final class NativeReportView: NSView {
         let labelW: CGFloat = 50
         let totalW: CGFloat = 46
         let levelW = (w - labelW - totalW) / CGFloat(max(snapshot.crmRows.count, 1))
-        let headerH: CGFloat = 28
+        let headerH: CGFloat = 36
 
         cell("", rect: NSRect(x: x, y: y, width: labelW, height: headerH),
              fillColor: NSColor(calibratedWhite: 0.85, alpha: 1))
@@ -662,13 +687,13 @@ final class NativeReportView: NSView {
                  fillColor: NSColor(calibratedWhite: 0.85, alpha: 1))
             drawText(
                 row.level.replacingOccurrences(of: "LEVEL", with: "Level"),
-                in: NSRect(x: cx + 2, y: y + 2, width: levelW - 4, height: 12),
-                size: 8.8, bold: true, alignment: .center
+                in: NSRect(x: cx + 2, y: y + 2, width: levelW - 4, height: 11),
+                size: 8.2, bold: true, alignment: .center
             )
             drawText(
-                row.area.capitalized,
-                in: NSRect(x: cx + 2, y: y + 14, width: levelW - 4, height: 16),
-                size: 6.6, alignment: .center
+                crmAreaLabel(row.area),
+                in: NSRect(x: cx + 2, y: y + 13, width: levelW - 4, height: 21),
+                size: 5.4, alignment: .center
             )
             cx += levelW
         }
@@ -676,7 +701,7 @@ final class NativeReportView: NSView {
              fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 10)
         y += headerH
 
-        let dataH: CGFloat = 18
+        let dataH: CGFloat = 17
         let totalMale = snapshot.crmRows.reduce(0) { $0 + $1.male }
         let totalFemale = snapshot.crmRows.reduce(0) { $0 + $1.female }
         let rowDefs: [(String, [Int], Int, Bool)] = [
@@ -707,41 +732,41 @@ final class NativeReportView: NSView {
 
             cell(
                 "KEY STAGE \(snapshot.keyStage)",
-                rect: NSRect(x: x, y: y, width: w, height: 16),
+                rect: NSRect(x: x, y: y, width: w, height: 14),
                 fillColor: NSColor(calibratedWhite: 0.85, alpha: 1),
                 bold: true,
-                size: 10.5
+                size: 10
             )
-            y += 16
+            y += 14
 
             cx = x
             for heading in ["BOSY", "MOSY", "EOSY"] {
                 cell(
                     heading,
-                    rect: NSRect(x: cx, y: y, width: groupW, height: 16),
+                    rect: NSRect(x: cx, y: y, width: groupW, height: 14),
                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1),
                     bold: true,
-                    size: 9.5
+                    size: 9.2
                 )
                 cx += groupW
             }
-            y += 16
+            y += 14
 
             cx = x
             for _ in 0..<3 {
-                cell("Reading Profile", rect: NSRect(x: cx, y: y, width: profileW, height: 20),
-                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 8.5)
+                cell("Reading Profile", rect: NSRect(x: cx, y: y, width: profileW, height: 18),
+                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 8.2)
                 cx += profileW
-                cell("Male", rect: NSRect(x: cx, y: y, width: countW, height: 20),
-                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 8.5)
+                cell("Male", rect: NSRect(x: cx, y: y, width: countW, height: 18),
+                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 8.2)
                 cx += countW
-                cell("Female", rect: NSRect(x: cx, y: y, width: countW, height: 20),
-                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 8.5)
+                cell("Female", rect: NSRect(x: cx, y: y, width: countW, height: 18),
+                     fillColor: NSColor(calibratedWhite: 0.85, alpha: 1), bold: true, size: 8.2)
                 cx += countW
             }
-            y += 20
+            y += 18
 
-            let profileH: CGFloat = 15
+            let profileH: CGFloat = 13
             for p in snapshot.profileRows {
                 let values: [(String, Int, Int)] = [
                     (p.label, p.bosyMale, p.bosyFemale),
@@ -782,7 +807,7 @@ final class NativeReportView: NSView {
             y += 32
         }
 
-        drawSignatureBlock(pageY: pageY, y: y + 10, x: x, width: w, includeDate: true)
+        drawSignatureBlock(pageY: pageY, y: y + 12, x: x, width: w, includeDate: true)
     }
 
     private enum ListEntry {
@@ -3167,7 +3192,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.19 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.20 • Offline macOS App")
             }
         }
     }
