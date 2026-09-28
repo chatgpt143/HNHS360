@@ -2319,6 +2319,10 @@ final class AppStore: ObservableObject {
         NativeReportView(type: type, snapshot: nativeReportSnapshot(stage: stage))
     }
 
+    func reportPDFData(stage: String, type: PrintoutType) -> Data? {
+        nativeReportView(stage: stage, type: type).pdfData()
+    }
+
     func previewReport(stage: String, type: PrintoutType) {
         let view = nativeReportView(stage: stage, type: type)
         guard let data = view.pdfData() else {
@@ -2513,7 +2517,7 @@ struct BrandView: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text("BULIG ReadTrack").font(.title2.bold())
-                Text("Version 0.25")
+                Text("Version 0.26")
                     .font(.caption.bold())
                     .foregroundStyle(.blue)
                 Text("Reading Monitoring System for Teachers")
@@ -4738,141 +4742,174 @@ struct MonitoringView: View {
     }
 }
 
+
+struct ReportPDFPreview: NSViewRepresentable {
+    let data: Data?
+
+    func makeNSView(context: Context) -> PDFView {
+        let view = PDFView()
+        view.autoScales = true
+        view.displayMode = .singlePageContinuous
+        view.displayDirection = .vertical
+        view.displaysPageBreaks = true
+        view.pageShadowsEnabled = true
+        view.backgroundColor = NSColor(calibratedWhite: 0.82, alpha: 1)
+        if let data, let document = PDFDocument(data: data) {
+            view.document = document
+            view.goToFirstPage(nil)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: PDFView, context: Context) {
+        guard let data, let document = PDFDocument(data: data) else {
+            nsView.document = nil
+            return
+        }
+
+        nsView.document = document
+        nsView.autoScales = true
+        nsView.goToFirstPage(nil)
+    }
+}
+
 struct ReportsView: View {
     @ObservedObject var store: AppStore
     @State private var stage = "PRETEST"
     @State private var printout: PrintoutType = .classroomMonitoring
 
+    private var reportData: Data? {
+        store.reportPDFData(stage: stage, type: printout)
+    }
+
+    private var pageDescription: String {
+        printout == .classroomMonitoring
+            ? "A4 Landscape • 1-page Classroom Reading Monitoring Report"
+            : "A4 Landscape • List of Pupils • Multiple pages when needed"
+    }
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                PageHeader(title: "Reports", subtitle: "Two official BULIG print-outs based on the Excel forms")
+        VStack(alignment: .leading, spacing: 16) {
+            PageHeader(
+                title: "Reports",
+                subtitle: "Live print preview — what you see below is what BULIG will print or save as PDF"
+            )
 
-                HStack(spacing: 14) {
-                    Picker("Print-out", selection: $printout) {
-                        ForEach(PrintoutType.allCases) { item in Text(item.rawValue).tag(item) }
-                    }
-                    .frame(width: 330)
-
-                    Picker("Assessment Period", selection: $stage) {
-                        Text("PRETEST").tag("PRETEST")
-                        ForEach(assessmentPeriods, id: \.self) { Text($0).tag($0) }
-                    }
-                    .frame(width: 210)
-
-                    Spacer()
-                    Button { store.previewReport(stage: stage, type: printout) } label: {
-                        Label("Preview", systemImage: "eye")
-                    }
-                    Button { store.printReport(stage: stage, type: printout) } label: {
-                        Label("Print", systemImage: "printer")
-                    }
-                    Button { store.savePDFReport(stage: stage, type: printout) } label: {
-                        Label("Save as PDF", systemImage: "arrow.down.doc")
-                    }
-                    .buttonStyle(.borderedProminent)
-
-                    Button { store.exportAllReports() } label: {
-                        Label("Export All", systemImage: "folder.badge.plus")
-                    }
-                    .help("Export both official PDF reports for PRETEST and all APs with encoded data")
-                }
-
-                if printout == .classroomMonitoring {
-                    GroupBox("CLASSROOM READING MONITORING REPORT") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Text("Assessment Period").foregroundStyle(.secondary)
-                                Text(stage).bold()
-                                Spacer()
-                                Text("Term").foregroundStyle(.secondary)
-                                Text(store.data.assessmentTerms[stage] ?? "1ST").bold()
-                            }
-                            Grid(alignment: .leading, horizontalSpacing: 34, verticalSpacing: 8) {
-                                GridRow { Text("LEVEL").bold(); Text("MALE").bold(); Text("FEMALE").bold(); Text("TOTAL").bold() }
-                                Divider()
-                                ForEach(store.reportRows(stage: stage), id: \.0) { row in
-                                    GridRow { Text(row.0).bold(); Text("\(row.1)"); Text("\(row.2)"); Text("\(row.3)").bold() }
-                                }
-                            }
-                            Divider()
-                            if store.keyStage() > 0 {
-                                Text("KEY STAGE \(store.keyStage()) ONLY").font(.headline)
-                                Text("The print/PDF will include only this Key Stage table. Key Stages not applicable to Grade \(store.data.settings.gradeLevel) will not be printed.")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Label("Set the Grade Level in Setup before printing.", systemImage: "exclamationmark.triangle.fill")
-                                    .foregroundStyle(.orange)
-                            }
-                        }
-                        .padding(12)
-                    }
-                } else {
-                    GroupBox("LIST OF PUPILS") {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("The print-out follows the PRETEST LIPS / APLIST format and is printed in A4 portrait.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            HStack {
-                                Text("Male").bold(); Text("\(store.data.learners.filter { $0.sex == "Male" }.count)")
-                                Text("Female").bold(); Text("\(store.data.learners.filter { $0.sex == "Female" }.count)")
-                                Spacer()
-                                Text("Total Enrollment").bold(); Text("\(store.data.learners.count)")
-                            }
-                            Divider()
-                            ForEach(store.learnersForStage(stage).prefix(12), id: \.0.id) { learner, level in
-                                HStack {
-                                    Text(learner.displayName.isEmpty ? "Unnamed learner" : learner.displayName).frame(minWidth: 300, alignment: .leading)
-                                    Text(learner.sex).frame(width: 70, alignment: .leading)
-                                    Text(level.isEmpty ? "—" : level).monospaced().bold()
-                                }
-                            }
-                            if store.data.learners.count > 12 {
-                                Text("… and \(store.data.learners.count - 12) more learner(s) in the printed report.")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        .padding(12)
+            HStack(spacing: 14) {
+                Picker("Print-out", selection: $printout) {
+                    ForEach(PrintoutType.allCases) { item in
+                        Text(item.rawValue).tag(item)
                     }
                 }
+                .frame(width: 330)
 
-                GroupBox("Color Legend") {
-                    LazyVGrid(
-                        columns: [
-                            GridItem(.flexible(), spacing: 12),
-                            GridItem(.flexible(), spacing: 12),
-                            GridItem(.flexible(), spacing: 12)
-                        ],
-                        alignment: .leading,
-                        spacing: 10
-                    ) {
-                        ForEach(readingLevels) { level in
-                            HStack(spacing: 9) {
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color(nsColor: reportLevelColor(level.code)))
-                                    .frame(width: 34, height: 22)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 4)
-                                            .stroke(Color.secondary.opacity(0.45), lineWidth: 1)
-                                    )
-                                VStack(alignment: .leading, spacing: 1) {
-                                    Text(level.code).bold()
-                                    Text(level.area.capitalized)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
-                    .padding(10)
+                Picker("Assessment Period", selection: $stage) {
+                    Text("PRETEST").tag("PRETEST")
+                    ForEach(assessmentPeriods, id: \.self) { Text($0).tag($0) }
+                }
+                .frame(width: 210)
+
+                Spacer()
+
+                Button { store.previewReport(stage: stage, type: printout) } label: {
+                    Label("Open Preview", systemImage: "eye")
+                }
+
+                Button { store.printReport(stage: stage, type: printout) } label: {
+                    Label("Print", systemImage: "printer")
+                }
+
+                Button { store.savePDFReport(stage: stage, type: printout) } label: {
+                    Label("Save as PDF", systemImage: "arrow.down.doc")
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button { store.exportAllReports() } label: {
+                    Label("Export All", systemImage: "folder.badge.plus")
+                }
+                .help("Export both official PDF reports for PRETEST and all APs with encoded data")
+            }
+
+            HStack(spacing: 14) {
+                Label(stage, systemImage: "calendar")
+                    .font(.caption.bold())
+                Text("Term \(store.data.assessmentTerms[stage] ?? "1ST")")
+                    .font(.caption.bold())
+                Text(pageDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+
+                if store.keyStage() > 0 {
+                    Label("Key Stage \(store.keyStage())", systemImage: "book.closed")
+                        .font(.caption.bold())
                 }
             }
-            .padding(28)
+            .padding(.horizontal, 4)
+
+            GroupBox("ACTUAL PRINT PREVIEW") {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(nsColor: .underPageBackgroundColor))
+
+                    if reportData != nil {
+                        ReportPDFPreview(data: reportData)
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                            .padding(8)
+                    } else {
+                        VStack(spacing: 10) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .font(.system(size: 34))
+                                .foregroundStyle(.secondary)
+                            Text("The report preview could not be generated.")
+                                .font(.headline)
+                            Text("Check the class setup and assessment data, then try again.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .frame(minHeight: 520)
+                .padding(8)
+            }
+
+            GroupBox("Color Legend — App Reference Only, Not Printed") {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: 12),
+                        GridItem(.flexible(), spacing: 12),
+                        GridItem(.flexible(), spacing: 12)
+                    ],
+                    alignment: .leading,
+                    spacing: 8
+                ) {
+                    ForEach(readingLevels) { level in
+                        HStack(spacing: 8) {
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color(nsColor: reportLevelColor(level.code)))
+                                .frame(width: 30, height: 18)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .stroke(Color.secondary.opacity(0.45), lineWidth: 1)
+                                )
+
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(level.code)
+                                    .font(.caption.bold())
+                                Text(level.area.capitalized)
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                }
+                .padding(8)
+            }
         }
+        .padding(28)
     }
 }
-
 
 struct BackupView: View {
     @ObservedObject var store: AppStore
@@ -5099,7 +5136,7 @@ struct BULIGReadTrackApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG ReadTrack v0.25 • Reading Monitoring System for Teachers • Offline macOS App")
+                Text("BULIG ReadTrack v0.26 • Reading Monitoring System for Teachers • Offline macOS App")
             }
         }
     }
