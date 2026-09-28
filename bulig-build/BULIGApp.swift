@@ -2261,43 +2261,706 @@ struct StatCard: View {
     }
 }
 
-struct DashboardView: View {
-    @ObservedObject var store: AppStore
+
+struct DashboardProgressPoint: Identifiable {
+    let id = UUID()
+    let ap: String
+    let ready: Int
+    let notReady: Int
+    let reverted: Int
+}
+
+struct DashboardAttentionItem: Identifiable {
+    let id: UUID
+    let learnerName: String
+    let level: String
+    let status: String
+    let reason: String
+}
+
+struct DashboardMetricCard: View {
+    let title: String
+    let value: String
+    let symbol: String
+    var tint: Color = .blue
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                PageHeader(title: "Dashboard", subtitle: "Bukidnon's Unified Literacy and Intervention Gateway")
-                HStack(spacing: 14) {
-                    StatCard(title: "Learners", value: "\(store.data.learners.count)", symbol: "person.2.fill")
-                    StatCard(title: "Male", value: "\(store.data.learners.filter{$0.sex == "Male"}.count)", symbol: "person.fill")
-                    StatCard(title: "Female", value: "\(store.data.learners.filter{$0.sex == "Female"}.count)", symbol: "person.fill")
-                    StatCard(title: "Key Stage", value: store.keyStage() == 0 ? "—" : "KS \(store.keyStage())", symbol: "book.fill")
-                }
-                GroupBox("Current Class") {
-                    Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 10) {
-                        GridRow { Text("School").foregroundStyle(.secondary); Text(store.data.settings.schoolName.isEmpty ? "Not configured" : store.data.settings.schoolName).bold() }
-                        GridRow { Text("Class").foregroundStyle(.secondary); Text("Grade \(store.data.settings.gradeLevel) – \(store.data.settings.section)").bold() }
-                        GridRow { Text("Adviser").foregroundStyle(.secondary); Text(store.data.settings.adviser).bold() }
-                        GridRow { Text("Assessment Tool").foregroundStyle(.secondary); Text(store.data.settings.assessmentTool).bold() }
-                    }
-                    .padding(8)
-                }
-                GroupBox("Reading Level Snapshot") {
-                    VStack(spacing: 8) {
-                        ForEach(readingLevels) { level in
-                            HStack {
-                                Text(level.code).frame(width: 90, alignment: .leading).bold()
-                                Text(level.area).font(.caption).foregroundStyle(.secondary)
-                                Spacer()
-                                Text("\(store.data.learners.filter{$0.pre.level == level.code}.count)").monospacedDigit().bold()
-                            }
-                            Divider()
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(.title3)
+                .foregroundStyle(tint)
+                .frame(width: 34, height: 34)
+                .background(tint.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value)
+                    .font(.title2.bold())
+                    .monospacedDigit()
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+        )
+    }
+}
+
+struct DashboardDonutChart: View {
+    let labels: [String]
+    let values: [Int]
+
+    private let palette: [Color] = [.blue, .green, .orange, .purple, .pink, .teal]
+
+    var total: Int { values.reduce(0, +) }
+
+    var body: some View {
+        HStack(spacing: 20) {
+            ZStack {
+                Canvas { context, size in
+                    let center = CGPoint(x: size.width / 2, y: size.height / 2)
+                    let radius = min(size.width, size.height) * 0.36
+                    let lineWidth = min(size.width, size.height) * 0.18
+
+                    if total == 0 {
+                        var circle = Path()
+                        circle.addEllipse(in: CGRect(
+                            x: center.x - radius,
+                            y: center.y - radius,
+                            width: radius * 2,
+                            height: radius * 2
+                        ))
+                        context.stroke(circle, with: .color(.secondary.opacity(0.2)), lineWidth: lineWidth)
+                    } else {
+                        var start = -Double.pi / 2
+                        for index in values.indices {
+                            let fraction = Double(values[index]) / Double(total)
+                            guard fraction > 0 else { continue }
+                            let end = start + fraction * Double.pi * 2
+                            var path = Path()
+                            path.addArc(
+                                center: center,
+                                radius: radius,
+                                startAngle: .radians(start),
+                                endAngle: .radians(end),
+                                clockwise: false
+                            )
+                            context.stroke(
+                                path,
+                                with: .color(palette[index % palette.count]),
+                                style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt)
+                            )
+                            start = end
                         }
                     }
-                    .padding(8)
+                }
+                .frame(width: 180, height: 180)
+
+                VStack(spacing: 0) {
+                    Text("\(total)")
+                        .font(.title2.bold())
+                        .monospacedDigit()
+                    Text("Profiled")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(labels.indices, id: \.self) { index in
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(palette[index % palette.count])
+                            .frame(width: 9, height: 9)
+                        Text(labels[index])
+                            .font(.caption)
+                            .lineLimit(1)
+                        Spacer(minLength: 10)
+                        Text("\(values[index])")
+                            .font(.caption.bold())
+                            .monospacedDigit()
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct DashboardProgressChart: View {
+    let points: [DashboardProgressPoint]
+
+    private var maximum: Int {
+        max(1, points.flatMap { [$0.ready, $0.notReady, $0.reverted] }.max() ?? 1)
+    }
+
+    private func path(for values: [Int], size: CGSize) -> Path {
+        var path = Path()
+        guard !values.isEmpty else { return path }
+        let left: CGFloat = 26
+        let right: CGFloat = 10
+        let top: CGFloat = 14
+        let bottom: CGFloat = 26
+        let usableW = max(1, size.width - left - right)
+        let usableH = max(1, size.height - top - bottom)
+
+        for index in values.indices {
+            let x = left + usableW * CGFloat(index) / CGFloat(max(1, values.count - 1))
+            let y = top + usableH * (1 - CGFloat(values[index]) / CGFloat(maximum))
+            if index == 0 { path.move(to: CGPoint(x: x, y: y)) }
+            else { path.addLine(to: CGPoint(x: x, y: y)) }
+        }
+        return path
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 16) {
+                Label("READY", systemImage: "circle.fill").foregroundStyle(.green)
+                Label("NOT READY", systemImage: "circle.fill").foregroundStyle(.orange)
+                Label("REVERTED", systemImage: "circle.fill").foregroundStyle(.red)
+                Spacer()
+            }
+            .font(.caption)
+
+            GeometryReader { geo in
+                ZStack {
+                    Canvas { context, size in
+                        let left: CGFloat = 26
+                        let right: CGFloat = 10
+                        let top: CGFloat = 14
+                        let bottom: CGFloat = 26
+                        let usableH = max(1, size.height - top - bottom)
+
+                        for step in 0...4 {
+                            let y = top + usableH * CGFloat(step) / 4
+                            var grid = Path()
+                            grid.move(to: CGPoint(x: left, y: y))
+                            grid.addLine(to: CGPoint(x: size.width - right, y: y))
+                            context.stroke(grid, with: .color(.secondary.opacity(0.12)), lineWidth: 1)
+                        }
+
+                        context.stroke(
+                            path(for: points.map(\.ready), size: size),
+                            with: .color(.green),
+                            style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
+                        )
+                        context.stroke(
+                            path(for: points.map(\.notReady), size: size),
+                            with: .color(.orange),
+                            style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
+                        )
+                        context.stroke(
+                            path(for: points.map(\.reverted), size: size),
+                            with: .color(.red),
+                            style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
+                        )
+                    }
+
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Text("AP1")
+                            Spacer()
+                            Text("AP5")
+                            Spacer()
+                            Text("AP10")
+                            Spacer()
+                            Text("AP15")
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 26)
+                        .padding(.trailing, 10)
+                    }
+                }
+            }
+            .frame(height: 190)
+        }
+    }
+}
+
+struct DashboardView: View {
+    @ObservedObject var store: AppStore
+    @State private var selectedStage = "PRETEST"
+    @State private var selectedProfilePeriod = "BOSY"
+    @State private var selectedLevel: String? = nil
+
+    private var stageOptions: [String] { ["PRETEST"] + assessmentPeriods }
+
+    private func stageLevel(_ learner: Learner, stage: String) -> String {
+        stage == "PRETEST"
+            ? store.preAssessment(for: learner).level
+            : store.currentLevel(learner, through: stage)
+    }
+
+    private func inactiveStatus(_ learner: Learner, stage: String) -> (period: String, status: String)? {
+        guard stage != "PRETEST" else { return nil }
+
+        if let entry = learner.assessments[stage], store.isInactiveStatus(entry.result) {
+            return (stage, entry.result)
+        }
+        return store.inactiveStatusBeforeAP(learner, ap: stage)
+    }
+
+    private var activeCount: Int {
+        store.data.learners.filter { inactiveStatus($0, stage: selectedStage) == nil }.count
+    }
+
+    private func resultCount(_ result: String) -> Int {
+        guard selectedStage != "PRETEST" else { return 0 }
+        return store.data.learners.filter { $0.assessments[selectedStage]?.result == result }.count
+    }
+
+    private var inactiveCount: Int {
+        store.data.learners.filter { inactiveStatus($0, stage: selectedStage) != nil }.count
+    }
+
+    private func levelCount(_ level: String) -> Int {
+        store.data.learners.filter { stageLevel($0, stage: selectedStage) == level }.count
+    }
+
+    private var maxLevelCount: Int {
+        max(1, readingLevels.map { levelCount($0.code) }.max() ?? 1)
+    }
+
+    private func normalizedProfile(_ raw: String) -> String {
+        if raw.hasPrefix("KS"), let underscore = raw.firstIndex(of: "_") {
+            return String(raw[raw.index(after: underscore)...])
+        }
+        return raw
+    }
+
+    private func profileValue(_ learner: Learner) -> String {
+        let pre = store.preAssessment(for: learner)
+        switch selectedProfilePeriod {
+        case "MOSY": return normalizedProfile(pre.mosy)
+        case "EOSY": return normalizedProfile(pre.eosy)
+        default: return normalizedProfile(pre.bosy)
+        }
+    }
+
+    private var profileLabels: [String] {
+        store.profileLabelsForCurrentKeyStage()
+    }
+
+    private var profileValues: [Int] {
+        profileLabels.map { label in
+            store.data.learners.filter { profileValue($0) == label }.count
+        }
+    }
+
+    private var progressPoints: [DashboardProgressPoint] {
+        assessmentPeriods.map { ap in
+            DashboardProgressPoint(
+                ap: ap,
+                ready: store.data.learners.filter { $0.assessments[ap]?.result == "READY" }.count,
+                notReady: store.data.learners.filter { $0.assessments[ap]?.result == "NOT READY" }.count,
+                reverted: store.data.learners.filter { $0.assessments[ap]?.result == "REVERTED" }.count
+            )
+        }
+    }
+
+    private func levelIndex(_ value: String) -> Int? {
+        readingLevels.firstIndex(where: { $0.code == value })
+    }
+
+    private var movementSummary: (advanced: Int, same: Int, reverted: Int, manual: Int) {
+        guard selectedStage != "PRETEST" else { return (0, 0, 0, 0) }
+
+        var advanced = 0
+        var same = 0
+        var reverted = 0
+        var manual = 0
+
+        for learner in store.data.learners {
+            guard let entry = learner.assessments[selectedStage],
+                  !entry.result.isEmpty,
+                  !store.isInactiveStatus(entry.result) else { continue }
+
+            let previous = store.levelBeforeAP(learner, ap: selectedStage)
+            let current = store.levelAfterAP(learner, ap: selectedStage)
+
+            if !entry.overrideLevel.isEmpty { manual += 1 }
+
+            if let beforeIndex = levelIndex(previous), let afterIndex = levelIndex(current) {
+                if afterIndex > beforeIndex { advanced += 1 }
+                else if afterIndex < beforeIndex { reverted += 1 }
+                else { same += 1 }
+            }
+        }
+        return (advanced, same, reverted, manual)
+    }
+
+    private func consecutiveNotReady(_ learner: Learner, through stage: String) -> Int {
+        guard stage != "PRETEST",
+              let target = assessmentPeriods.firstIndex(of: stage) else { return 0 }
+
+        var count = 0
+        var index = target
+        while index >= 0 {
+            let ap = assessmentPeriods[index]
+            if learner.assessments[ap]?.result == "NOT READY" {
+                count += 1
+            } else {
+                break
+            }
+            if index == 0 { break }
+            index -= 1
+        }
+        return count
+    }
+
+    private func statusDisplay(_ value: String) -> String {
+        switch value {
+        case "NLS": return "No Longer in School"
+        case "NLP": return "No Longer Participating"
+        case "TRANSFER OUT": return "Transfer Out"
+        default: return value
+        }
+    }
+
+    private var attentionItems: [DashboardAttentionItem] {
+        guard selectedStage != "PRETEST" else {
+            return store.data.learners.compactMap { learner in
+                let level = store.preAssessment(for: learner).level
+                guard level.isEmpty else { return nil }
+                return DashboardAttentionItem(
+                    id: learner.id,
+                    learnerName: learner.displayName,
+                    level: "—",
+                    status: "PRETEST",
+                    reason: "Initial reading level not yet encoded"
+                )
+            }
+        }
+
+        return store.data.learners.compactMap { learner in
+            var reasons: [String] = []
+            var status = learner.assessments[selectedStage]?.result ?? "—"
+
+            if let inactive = inactiveStatus(learner, stage: selectedStage) {
+                status = inactive.status
+                reasons.append("\(statusDisplay(inactive.status)) since \(inactive.period)")
+            }
+
+            if learner.assessments[selectedStage]?.result == "REVERTED" {
+                reasons.append("Reading level reverted")
+            }
+
+            if let entry = learner.assessments[selectedStage], !entry.overrideLevel.isEmpty {
+                reasons.append("Manual level adjustment")
+            }
+
+            let consecutive = consecutiveNotReady(learner, through: selectedStage)
+            if consecutive >= 2 {
+                reasons.append("\(consecutive) consecutive NOT READY results")
+            }
+
+            guard !reasons.isEmpty else { return nil }
+
+            return DashboardAttentionItem(
+                id: learner.id,
+                learnerName: learner.displayName,
+                level: stageLevel(learner, stage: selectedStage),
+                status: statusDisplay(status),
+                reason: reasons.joined(separator: " • ")
+            )
+        }
+    }
+
+    private var selectedLevelLearners: [Learner] {
+        guard let selectedLevel else { return [] }
+        return store.data.learners
+            .filter { stageLevel($0, stage: selectedStage) == selectedLevel }
+            .sorted { $0.displayName < $1.displayName }
+    }
+
+    private var classContext: String {
+        let grade = store.data.settings.gradeLevel.isEmpty ? "Grade —" : "Grade \(store.data.settings.gradeLevel)"
+        let section = store.data.settings.section.isEmpty ? "Section —" : store.data.settings.section
+        let sy = store.data.settings.schoolYear.isEmpty ? "SY —" : "SY \(store.data.settings.schoolYear)"
+        let term = selectedStage == "PRETEST"
+            ? (store.data.assessmentTerms["PRETEST"] ?? "1ST")
+            : (store.data.assessmentTerms[selectedStage] ?? "1ST")
+        let keyStage = store.keyStage() == 0 ? "Key Stage —" : "Key Stage \(store.keyStage())"
+        return "\(grade) – \(section)  •  \(sy)  •  \(term) Term  •  \(keyStage)"
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top) {
+                    PageHeader(
+                        title: "Dashboard",
+                        subtitle: store.data.settings.schoolName.isEmpty
+                            ? "Bukidnon's Unified Literacy and Intervention Gateway"
+                            : store.data.settings.schoolName
+                    )
+
+                    Spacer()
+
+                    Picker("View Data From", selection: $selectedStage) {
+                        ForEach(stageOptions, id: \.self) { Text($0).tag($0) }
+                    }
+                    .frame(width: 220)
+                }
+
+                Text(classContext)
+                    .font(.subheadline.bold())
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 12) {
+                    DashboardMetricCard(
+                        title: "Total Learners",
+                        value: "\(store.data.learners.count)",
+                        symbol: "person.2.fill",
+                        tint: .blue
+                    )
+                    DashboardMetricCard(
+                        title: "Male",
+                        value: "\(store.data.learners.filter { $0.sex == "Male" }.count)",
+                        symbol: "person.fill",
+                        tint: .indigo
+                    )
+                    DashboardMetricCard(
+                        title: "Female",
+                        value: "\(store.data.learners.filter { $0.sex == "Female" }.count)",
+                        symbol: "person.fill",
+                        tint: .purple
+                    )
+                    DashboardMetricCard(
+                        title: "Active Learners",
+                        value: "\(activeCount)",
+                        symbol: "person.crop.circle.badge.checkmark",
+                        tint: .green
+                    )
+                }
+
+                if selectedStage != "PRETEST" {
+                    HStack(spacing: 12) {
+                        DashboardMetricCard(
+                            title: "Ready",
+                            value: "\(resultCount("READY"))",
+                            symbol: "arrow.up.circle.fill",
+                            tint: .green
+                        )
+                        DashboardMetricCard(
+                            title: "Not Ready",
+                            value: "\(resultCount("NOT READY"))",
+                            symbol: "minus.circle.fill",
+                            tint: .orange
+                        )
+                        DashboardMetricCard(
+                            title: "Reverted",
+                            value: "\(resultCount("REVERTED"))",
+                            symbol: "arrow.down.circle.fill",
+                            tint: .red
+                        )
+                        DashboardMetricCard(
+                            title: "Inactive",
+                            value: "\(inactiveCount)",
+                            symbol: "person.crop.circle.badge.xmark",
+                            tint: .secondary
+                        )
+                    }
+                }
+
+                HStack(alignment: .top, spacing: 16) {
+                    GroupBox("Reading Level Distribution – \(selectedStage)") {
+                        VStack(spacing: 8) {
+                            ForEach(readingLevels) { level in
+                                Button {
+                                    selectedLevel = level.code
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Text(level.code)
+                                            .font(.caption.bold())
+                                            .frame(width: 68, alignment: .leading)
+
+                                        GeometryReader { geo in
+                                            let count = levelCount(level.code)
+                                            ZStack(alignment: .leading) {
+                                                Capsule()
+                                                    .fill(Color.secondary.opacity(0.09))
+                                                Capsule()
+                                                    .fill(Color(nsColor: reportLevelColor(level.code)))
+                                                    .frame(
+                                                        width: count == 0
+                                                            ? 0
+                                                            : max(4, geo.size.width * CGFloat(count) / CGFloat(maxLevelCount))
+                                                    )
+                                            }
+                                        }
+                                        .frame(height: 15)
+
+                                        Text("\(levelCount(level.code))")
+                                            .font(.caption.bold())
+                                            .monospacedDigit()
+                                            .frame(width: 30, alignment: .trailing)
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .help("Show learners in \(level.code)")
+                            }
+                        }
+                        .padding(10)
+                    }
+                    .frame(maxWidth: .infinity)
+
+                    GroupBox("Reading Profile") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Picker("Profile Period", selection: $selectedProfilePeriod) {
+                                ForEach(preAssessmentPeriods, id: \.self) { Text($0).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+
+                            DashboardDonutChart(
+                                labels: profileLabels,
+                                values: profileValues
+                            )
+                        }
+                        .padding(10)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+
+                GroupBox("Class Progress – AP1 to AP15") {
+                    DashboardProgressChart(points: progressPoints)
+                        .padding(10)
+                }
+
+                HStack(alignment: .top, spacing: 16) {
+                    GroupBox("Movement Summary – \(selectedStage)") {
+                        let movement = movementSummary
+                        VStack(spacing: 12) {
+                            HStack {
+                                Label("Advanced", systemImage: "arrow.up.right")
+                                Spacer()
+                                Text("\(movement.advanced)").bold().monospacedDigit()
+                            }
+                            Divider()
+                            HStack {
+                                Label("Stayed at Same Level", systemImage: "arrow.right")
+                                Spacer()
+                                Text("\(movement.same)").bold().monospacedDigit()
+                            }
+                            Divider()
+                            HStack {
+                                Label("Reverted", systemImage: "arrow.down.right")
+                                Spacer()
+                                Text("\(movement.reverted)").bold().monospacedDigit()
+                            }
+                            Divider()
+                            HStack {
+                                Label("Manual Level Changes", systemImage: "pencil")
+                                Spacer()
+                                Text("\(movement.manual)").bold().monospacedDigit()
+                            }
+                        }
+                        .padding(10)
+                    }
+                    .frame(width: 330)
+
+                    GroupBox("Learners Needing Attention") {
+                        if attentionItems.isEmpty {
+                            ContentUnavailableView(
+                                "No Attention Flags",
+                                systemImage: "checkmark.circle",
+                                description: Text("No learners currently meet the dashboard attention rules for \(selectedStage).")
+                            )
+                            .frame(minHeight: 180)
+                        } else {
+                            VStack(spacing: 0) {
+                                HStack {
+                                    Text("Learner").frame(maxWidth: .infinity, alignment: .leading)
+                                    Text("Level").frame(width: 80, alignment: .leading)
+                                    Text("Status").frame(width: 120, alignment: .leading)
+                                    Text("Reason").frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .font(.caption.bold())
+                                .padding(.horizontal, 8)
+                                .padding(.bottom, 7)
+
+                                Divider()
+
+                                ForEach(attentionItems.prefix(12)) { item in
+                                    HStack(alignment: .top) {
+                                        Text(item.learnerName)
+                                            .font(.caption)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                        Text(item.level.isEmpty ? "—" : item.level)
+                                            .font(.caption)
+                                            .frame(width: 80, alignment: .leading)
+                                        Text(item.status)
+                                            .font(.caption)
+                                            .frame(width: 120, alignment: .leading)
+                                        Text(item.reason)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 7)
+
+                                    Divider()
+                                }
+
+                                if attentionItems.count > 12 {
+                                    Text("+ \(attentionItems.count - 12) more learner(s)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.top, 8)
+                                }
+                            }
+                            .padding(10)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
                 }
             }
             .padding(28)
+        }
+        .sheet(isPresented: Binding(
+            get: { selectedLevel != nil },
+            set: { if !$0 { selectedLevel = nil } }
+        )) {
+            if let selectedLevel {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("\(selectedLevel) Learners")
+                                .font(.title2.bold())
+                            Text("\(selectedStage) • \(selectedLevelLearners.count) learner(s)")
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Close") { self.selectedLevel = nil }
+                    }
+
+                    List(selectedLevelLearners) { learner in
+                        HStack {
+                            Text(learner.displayName).bold()
+                            Spacer()
+                            Text(learner.sex)
+                                .foregroundStyle(.secondary)
+                            Text(learner.lrn)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .padding(22)
+                .frame(width: 620, height: 480)
+            }
         }
     }
 }
@@ -3275,7 +3938,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.21 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.22 • Offline macOS App")
             }
         }
     }
