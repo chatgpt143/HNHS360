@@ -226,10 +226,13 @@ struct NativeProfileRow {
 }
 
 struct NativePupilRow {
+    let lrn: String
     let name: String
     let sex: String
+    let previousLevel: String
+    let currentLevel: String
     let area: String
-    let level: String
+    let status: String
 }
 
 struct NativeReportSnapshot {
@@ -271,7 +274,7 @@ final class NativeReportView: NSView {
             self.pupilPageCounts = []
             self.pageCount = 1
         } else {
-            self.paperSize = NSSize(width: 595.28, height: 841.89)
+            self.paperSize = NSSize(width: 841.89, height: 595.28)
             let entryCount = snapshot.pupils.count + 2 // Male/Female group rows
             let counts = NativeReportView.makePupilPageCounts(entryCount: entryCount)
             self.pupilPageCounts = counts
@@ -295,26 +298,30 @@ final class NativeReportView: NSView {
     private static func makePupilPageCounts(entryCount: Int) -> [Int] {
         guard entryCount > 0 else { return [0] }
 
-        // With header + totals + signatures, 17 entries fit on one A4 portrait page.
-        if entryCount <= 17 { return [entryCount] }
+        // A4 landscape. First page contains the full institutional header.
+        // Final page reserves space for enrollment totals and signatories.
+        if entryCount <= 9 { return [entryCount] }
 
-        // First page has the full report header. Continuation pages do not.
-        // Capacities: first 22, middle 30, last 26 (last reserves totals/signatures).
         let pageCount: Int
-        if entryCount <= 48 {
+        if entryCount <= 36 {
             pageCount = 2
         } else {
-            pageCount = 2 + Int(ceil(Double(entryCount - 48) / 30.0))
+            pageCount = 2 + Int(ceil(Double(entryCount - 36) / 27.0))
         }
 
         var capacities: [Int] = []
         for i in 0..<pageCount {
-            if i == 0 { capacities.append(22) }
-            else if i == pageCount - 1 { capacities.append(26) }
-            else { capacities.append(30) }
+            if i == 0 {
+                capacities.append(15)
+            } else if i == pageCount - 1 {
+                capacities.append(21)
+            } else {
+                capacities.append(27)
+            }
         }
 
-        // Balance rows across pages so no continuation page has a huge empty lower area.
+        // Balance the learner rows while respecting the space available
+        // on the first and final pages.
         var remaining = entryCount
         var counts: [Int] = []
         for i in 0..<pageCount {
@@ -325,8 +332,6 @@ final class NativeReportView: NSView {
             remaining -= value
         }
 
-        // If the balancing pass left rows because an earlier page hit its cap,
-        // distribute them to pages that still have capacity.
         var i = pageCount - 1
         while remaining > 0 {
             if counts[i] < capacities[i] {
@@ -602,6 +607,19 @@ final class NativeReportView: NSView {
         }
     }
 
+    private func pupilAreaLabel(_ area: String) -> String {
+        switch area.uppercased() {
+        case "ORAL LANGUAGE": return "Oral Language"
+        case "PHONOLOGICAL AWARENESS": return "Phonological\nAwareness"
+        case "WORD RECOGNITION": return "Word Recognition"
+        case "FLUENCY": return "Fluency"
+        case "VOCABULARY AND LISTENING COMPREHENSION": return "Vocabulary &\nListening Comp."
+        case "GRADED READING COMPREHENSION": return "Graded Reading\nComprehension"
+        case "GENUINE LOVE FOR READING AND WRITING": return "Love for Reading\n& Writing"
+        default: return area.capitalized
+        }
+    }
+
     private func drawSignatureBlock(
         pageY: CGFloat,
         y requestedY: CGFloat,
@@ -839,17 +857,40 @@ final class NativeReportView: NSView {
         let x = leftMargin
         let w = paperSize.width - leftMargin - rightMargin
 
-        // Full DepEd/BULIG title + class information appears on FIRST PAGE ONLY.
+        // Full institutional header appears on the first page only.
         var y: CGFloat
         if pageIndex == 0 {
-            y = drawHeader(pageOriginY: pageY, title: "LIST OF PUPILS") + 8
+            y = drawHeader(pageOriginY: pageY, title: "LIST OF PUPILS") + 4
         } else {
             y = pageY + topMargin
         }
 
-        let widths: [CGFloat] = [30, 165, 92, 78, w - 30 - 165 - 92 - 78]
-        let headerH: CGFloat = 28
-        let headers = ["NO.", "LEARNER", "Reading Level", "Component/Level", "Color Coding"]
+        let fixedWidths: [CGFloat] = [
+            26,   // No.
+            78,   // LRN
+            160,  // Learner
+            38,   // Sex
+            63,   // Previous
+            63,   // Current
+            105,  // Component / Reading Area
+            80    // Status
+        ]
+        let usedWidth = fixedWidths.reduce(0, +)
+        let widths = fixedWidths + [max(55, w - usedWidth)] // Color Coding
+
+        let headerH: CGFloat = 24
+        let headers = [
+            "NO.",
+            "LRN",
+            "LEARNER",
+            "SEX",
+            "PREVIOUS\nLEVEL",
+            "CURRENT\nLEVEL",
+            "COMPONENT /\nREADING AREA",
+            "STATUS",
+            "COLOR\nCODING"
+        ]
+
         var cx = x
         for i in 0..<headers.count {
             cell(
@@ -857,7 +898,7 @@ final class NativeReportView: NSView {
                 rect: NSRect(x: cx, y: y, width: widths[i], height: headerH),
                 fillColor: NSColor(calibratedWhite: 0.85, alpha: 1),
                 bold: true,
-                size: 9
+                size: i == 2 ? 8.8 : 8.0
             )
             cx += widths[i]
         }
@@ -867,7 +908,7 @@ final class NativeReportView: NSView {
         let start = pupilPageCounts.prefix(pageIndex).reduce(0, +)
         let count = pageIndex < pupilPageCounts.count ? pupilPageCounts[pageIndex] : 0
         let end = min(entries.count, start + count)
-        let rowH: CGFloat = 24
+        let rowH: CGFloat = 18
 
         if start < end {
             for entry in entries[start..<end] {
@@ -878,22 +919,42 @@ final class NativeReportView: NSView {
                         rect: NSRect(x: x, y: y, width: w, height: rowH),
                         fillColor: NSColor(calibratedWhite: 0.90, alpha: 1),
                         bold: true,
-                        size: 11
+                        size: 9.5
                     )
 
                 case .pupil(let n, let pupil):
-                    // Color Coding is COLOR ONLY. No level text is printed in the color cell.
-                    let values = [String(n), pupil.name, pupil.area.capitalized, pupil.level, ""]
+                    // Color Coding remains color-only.
+                    let values = [
+                        String(n),
+                        pupil.lrn,
+                        pupil.name,
+                        pupil.sex,
+                        pupil.previousLevel,
+                        pupil.currentLevel,
+                        pupilAreaLabel(pupil.area),
+                        pupil.status,
+                        ""
+                    ]
+
                     cx = x
-                    for i in 0..<5 {
-                        let fillColor: NSColor? = i == 4 ? reportLevelColor(pupil.level) : nil
+                    for i in 0..<values.count {
+                        let fillColor: NSColor? = i == 8 ? reportLevelColor(pupil.currentLevel) : nil
+                        let fontSize: CGFloat
+                        switch i {
+                        case 1: fontSize = 7.8       // LRN
+                        case 2: fontSize = 8.6       // Learner
+                        case 6: fontSize = 6.6       // Reading area
+                        case 7: fontSize = 7.2       // Status
+                        default: fontSize = 8.2
+                        }
+
                         cell(
                             values[i],
                             rect: NSRect(x: cx, y: y, width: widths[i], height: rowH),
                             fillColor: fillColor,
-                            bold: i == 1,
-                            alignment: i == 1 ? .left : .center,
-                            size: i == 2 ? 8.2 : 10
+                            bold: i == 2,
+                            alignment: i == 2 ? .left : .center,
+                            size: fontSize
                         )
                         cx += widths[i]
                     }
@@ -903,47 +964,45 @@ final class NativeReportView: NSView {
         }
 
         if pageIndex == pageCount - 1 {
-            y += 8
+            y += 6
 
-            let summaryW = min(w * 0.72, 325)
-            let labelW = summaryW * 0.48
-            let countW = summaryW * 0.16
-            let sexLabelW = summaryW * 0.18
-            let sexCountW = summaryW - labelW - countW - sexLabelW
+            let summaryW: CGFloat = 350
+            let labelW: CGFloat = 150
+            let totalW: CGFloat = 45
+            let sexLabelW: CGFloat = 55
+            let sexCountW: CGFloat = 45
 
             cell(
                 "TOTAL ENROLLMENT:",
-                rect: NSRect(x: x, y: y, width: labelW, height: 22),
-                bold: true, alignment: .left, size: 10
+                rect: NSRect(x: x, y: y, width: labelW, height: 20),
+                bold: true, alignment: .left, size: 9.5
             )
             cell(
                 String(snapshot.maleCount + snapshot.femaleCount),
-                rect: NSRect(x: x + labelW, y: y, width: countW, height: 22),
-                bold: true, size: 10
+                rect: NSRect(x: x + labelW, y: y, width: totalW, height: 20),
+                bold: true, size: 9.5
             )
             cell(
                 "MALE:",
-                rect: NSRect(x: x + labelW + countW, y: y, width: sexLabelW, height: 22),
-                bold: true, size: 9
+                rect: NSRect(x: x + labelW + totalW, y: y, width: sexLabelW, height: 20),
+                bold: true, size: 8.5
             )
             cell(
                 String(snapshot.maleCount),
-                rect: NSRect(x: x + labelW + countW + sexLabelW, y: y, width: sexCountW, height: 22),
-                size: 10
+                rect: NSRect(x: x + labelW + totalW + sexLabelW, y: y, width: sexCountW, height: 20),
+                size: 9
             )
-            y += 22
-
             cell(
                 "FEMALE:",
-                rect: NSRect(x: x + labelW + countW, y: y, width: sexLabelW, height: 22),
-                bold: true, size: 9
+                rect: NSRect(x: x + labelW + totalW + sexLabelW + sexCountW, y: y, width: sexLabelW, height: 20),
+                bold: true, size: 8.5
             )
             cell(
                 String(snapshot.femaleCount),
-                rect: NSRect(x: x + labelW + countW + sexLabelW, y: y, width: sexCountW, height: 22),
-                size: 10
+                rect: NSRect(x: x + labelW + totalW + sexLabelW * 2 + sexCountW, y: y, width: sexCountW, height: 20),
+                size: 9
             )
-            y += 25
+            y += 24
 
             drawSignatureBlock(pageY: pageY, y: y, x: x, width: w, includeDate: true)
         }
@@ -1934,13 +1993,37 @@ final class AppStore: ObservableObject {
             )
         }
 
-        let pupils = learnersForStage(stage).map { learner, level -> NativePupilRow in
-            let info = readingLevels.first(where: { $0.code == level })
+        let pupils = data.learners.map { learner -> NativePupilRow in
+            let previousLevel: String
+            let currentLevelValue: String
+            let status: String
+
+            if stage == "PRETEST" {
+                previousLevel = "—"
+                currentLevelValue = preAssessment(for: learner).level
+                status = "—"
+            } else {
+                previousLevel = levelBeforeAP(learner, ap: stage)
+                currentLevelValue = levelAfterAP(learner, ap: stage)
+
+                if let entry = learner.assessments[stage], !entry.result.isEmpty {
+                    status = entry.result
+                } else if let inactive = inactiveStatusBeforeAP(learner, ap: stage) {
+                    status = inactive.status
+                } else {
+                    status = "—"
+                }
+            }
+
+            let info = readingLevels.first(where: { $0.code == currentLevelValue })
             return NativePupilRow(
+                lrn: learner.lrn,
                 name: learner.displayName,
                 sex: learner.sex,
+                previousLevel: previousLevel.isEmpty ? "—" : previousLevel,
+                currentLevel: currentLevelValue.isEmpty ? "—" : currentLevelValue,
                 area: info?.area ?? "",
-                level: level
+                status: status
             )
         }
 
@@ -3192,7 +3275,7 @@ struct BULIGRMSTeacherApp: App {
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .appInfo) {
                 Divider()
-                Text("BULIG RMS Teacher v0.20 • Offline macOS App")
+                Text("BULIG RMS Teacher v0.21 • Offline macOS App")
             }
         }
     }
