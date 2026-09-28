@@ -4868,39 +4868,218 @@ struct ReportsView: View {
     }
 }
 
+
 struct BackupView: View {
     @ObservedObject var store: AppStore
+    @State private var newSchoolYear = ""
+    @State private var actionMessage = ""
+    @State private var showMessage = false
+    @State private var restorePointToLoad: RestorePointInfo? = nil
+    @State private var archiveToOpen: SchoolYearArchiveInfo? = nil
+
+    private func dateText(_ date: Date) -> String {
+        DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            PageHeader(title: "Backup & Restore", subtitle: "Keep an offline copy of your BULIG data")
-            HStack(spacing: 18) {
-                GroupBox("Backup") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Save school setup, learners, pre-assessment, and AP1–AP15 entries into one JSON backup file.")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                PageHeader(
+                    title: "Backup & Restore",
+                    subtitle: "Backups, automatic restore points, and school-year archives"
+                )
+
+                HStack(alignment: .top, spacing: 18) {
+                    GroupBox("Manual Backup") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Save school setup, learners, pre-assessment, AP1–AP15 entries, and current records into one JSON backup file.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            Button { store.exportBackup() } label: {
+                                Label("Save Backup", systemImage: "square.and.arrow.down")
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    GroupBox("Restore Backup") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Load a BULIG JSON backup. An automatic restore point is created before the current data is replaced.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            Button { store.restoreBackup() } label: {
+                                Label("Restore Backup", systemImage: "arrow.counterclockwise")
+                            }
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                GroupBox("Automatic Restore Points – Latest 10") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("BULIG automatically creates restore points before major changes such as SF1 import, learner removal, AP finalization/unlocking, backup restore, reactivation, and starting a new school year.")
+                            .font(.caption)
                             .foregroundStyle(.secondary)
-                        Button { store.exportBackup() } label: {
-                            Label("Save Backup", systemImage: "square.and.arrow.down")
+
+                        let points = store.restorePoints()
+                        if points.isEmpty {
+                            Text("No automatic restore points yet.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 8)
+                        } else {
+                            ForEach(points) { point in
+                                HStack {
+                                    Image(systemName: "clock.arrow.circlepath")
+                                        .foregroundStyle(.blue)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(point.title)
+                                            .bold()
+                                        Text(dateText(point.date))
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Button("Restore") {
+                                        restorePointToLoad = point
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(10)
+                }
+
+                GroupBox("School Year Archive") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Starting a new school year archives the current complete data first. School information and report-logo settings are retained, while learners and class-specific information start fresh.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack {
+                            TextField("New School Year, e.g. 2027-2028", text: $newSchoolYear)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 260)
+
+                            Button {
+                                actionMessage = store.archiveAndStartNewSchoolYear(newSchoolYear)
+                                showMessage = true
+                                if actionMessage.contains("ready for") {
+                                    newSchoolYear = ""
+                                }
+                            } label: {
+                                Label("Archive & Start New School Year", systemImage: "calendar.badge.plus")
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            Spacer()
+                        }
+
+                        Divider()
+
+                        Text("Archived School Years")
+                            .font(.headline)
+
+                        let archives = store.schoolYearArchives()
+                        if archives.isEmpty {
+                            Text("No school-year archives yet.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(archives) { archive in
+                                HStack {
+                                    Image(systemName: "archivebox.fill")
+                                        .foregroundStyle(.secondary)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(archive.schoolYear)
+                                            .bold()
+                                        Text("Archived \(dateText(archive.date))")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Button("Open Archive") {
+                                        archiveToOpen = archive
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                                Divider()
+                            }
+
+                            Text("Opening an archive loads a working copy into BULIG. The archived JSON file itself remains unchanged.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(10)
+                }
+
+                GroupBox("Report Package") {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Export All Reports")
+                                .font(.headline)
+                            Text("Creates both official PDF reports for PRETEST and every AP that already has encoded data.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button {
+                            store.exportAllReports()
+                        } label: {
+                            Label("Export Report Package", systemImage: "folder.badge.plus")
                         }
                         .buttonStyle(.borderedProminent)
                     }
                     .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                GroupBox("Restore") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Restore a previously saved BULIG backup. The current data will be replaced by the selected backup.")
-                            .foregroundStyle(.secondary)
-                        Button { store.restoreBackup() } label: {
-                            Label("Restore Backup", systemImage: "arrow.counterclockwise")
-                        }
-                    }
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            Spacer()
+            .padding(28)
         }
-        .padding(28)
+        .alert("Restore Automatic Version?", isPresented: Binding(
+            get: { restorePointToLoad != nil },
+            set: { if !$0 { restorePointToLoad = nil } }
+        )) {
+            Button("Cancel", role: .cancel) { restorePointToLoad = nil }
+            Button("Restore") {
+                if let point = restorePointToLoad {
+                    store.restoreFromPoint(point)
+                    actionMessage = "The selected automatic restore point has been loaded."
+                    showMessage = true
+                }
+                restorePointToLoad = nil
+            }
+        } message: {
+            Text("The current working data will first receive its own restore point, then the selected earlier version will be loaded.")
+        }
+        .alert("Open Archived School Year?", isPresented: Binding(
+            get: { archiveToOpen != nil },
+            set: { if !$0 { archiveToOpen = nil } }
+        )) {
+            Button("Cancel", role: .cancel) { archiveToOpen = nil }
+            Button("Open") {
+                if let archive = archiveToOpen {
+                    store.openSchoolYearArchive(archive)
+                    actionMessage = "Opened archived school year \(archive.schoolYear). The original archive remains unchanged."
+                    showMessage = true
+                }
+                archiveToOpen = nil
+            }
+        } message: {
+            Text("Your current data will receive an automatic restore point before the archived school year is loaded.")
+        }
+        .alert("BULIG", isPresented: $showMessage) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(actionMessage)
+        }
     }
 }
 
